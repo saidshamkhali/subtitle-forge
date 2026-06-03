@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+import tomllib
+
+
+CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
+
+
+@dataclass(frozen=True)
+class CodexProviderConfig:
+    command: str = "codex"
+    extra_args: list[str] = field(default_factory=lambda: ["exec", "--skip-git-repo-check"])
+    model: str | None = None
+    reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True)
+class TranslationConfig:
+    style: str = "natural subtitle translation"
+    preserve_names: bool = True
+    preserve_formatting: bool = True
+    prompt: str | None = None
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    provider: str = "codex"
+    source_language: str = "en"
+    target_language: str = "fa"
+    output_format: str | None = None
+    batch_size: int = 50
+    rtl_mode: str = "auto"
+    codex: CodexProviderConfig = field(default_factory=CodexProviderConfig)
+    translation: TranslationConfig = field(default_factory=TranslationConfig)
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    config_path = path or find_config_file()
+    if not config_path:
+        return AppConfig()
+
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    if config_path.name == "pyproject.toml":
+        data = data.get("tool", {}).get("subtitle-forge", {})
+
+    defaults = data.get("defaults", {})
+    providers = data.get("providers", {})
+    translation = data.get("translation", {})
+    codex_data = providers.get("codex", {})
+
+    return AppConfig(
+        provider=defaults.get("provider", "codex"),
+        source_language=defaults.get("source_language", "en"),
+        target_language=defaults.get("target_language", "fa"),
+        output_format=defaults.get("output_format"),
+        batch_size=int(defaults.get("batch_size", 50)),
+        rtl_mode=defaults.get("rtl_mode", "auto"),
+        codex=CodexProviderConfig(
+            command=codex_data.get("command", "codex"),
+            extra_args=list(codex_data.get("extra_args", ["exec", "--skip-git-repo-check"])),
+            model=codex_data.get("model"),
+            reasoning_effort=codex_data.get("reasoning_effort"),
+        ),
+        translation=TranslationConfig(
+            style=translation.get("style", "natural subtitle translation"),
+            preserve_names=bool(translation.get("preserve_names", True)),
+            preserve_formatting=bool(translation.get("preserve_formatting", True)),
+            prompt=translation.get("prompt"),
+        ),
+    )
+
+
+def find_config_file(start: Path | None = None) -> Path | None:
+    current = (start or Path.cwd()).resolve()
+    for directory in (current, *current.parents):
+        for filename in CONFIG_FILENAMES:
+            candidate = directory / filename
+            if candidate.exists():
+                if filename == "pyproject.toml":
+                    try:
+                        data = tomllib.loads(candidate.read_text(encoding="utf-8"))
+                    except tomllib.TOMLDecodeError:
+                        continue
+                    if "subtitle-forge" not in data.get("tool", {}):
+                        continue
+                return candidate
+    return None
+
+
+def load_codex_default_model() -> str | None:
+    data = _load_codex_config()
+    model = data.get("model")
+    return model if isinstance(model, str) and model else None
+
+
+def load_codex_default_reasoning_effort() -> str | None:
+    data = _load_codex_config()
+    reasoning_effort = data.get("model_reasoning_effort")
+    return reasoning_effort if isinstance(reasoning_effort, str) and reasoning_effort else None
+
+
+def _load_codex_config() -> dict:
+    config_path = Path.home() / ".codex" / "config.toml"
+    if not config_path.exists():
+        return {}
+
+    try:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return {}

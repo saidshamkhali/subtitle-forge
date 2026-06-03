@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "subtitle-forge"
+version = "0.1.0"
+description = "Translate existing SRT and VTT subtitle files while preserving timings."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "Subtitle Forge contributors" }
+]
+keywords = ["subtitles", "translation", "srt", "vtt", "codex"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+  "srt>=3.5.3",
+  "typer>=0.12.5",
+  "webvtt-py>=0.5.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+]
+
+[project.scripts]
+subtitle-forge = "subtitle_forge.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/subtitle_forge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

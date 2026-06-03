@@ -1,0 +1,18 @@
+[defaults]
+provider = "codex"
+source_language = "en"
+target_language = "fa"
+output_format = "srt"
+batch_size = 50
+rtl_mode = "auto"
+
+[providers.codex]
+command = "codex"
+extra_args = ["exec", "--skip-git-repo-check"]
+# model = "gpt-5.5"
+# reasoning_effort = "medium"
+
+[translation]
+preserve_names = true
+preserve_formatting = true
+style = "natural subtitle translation"

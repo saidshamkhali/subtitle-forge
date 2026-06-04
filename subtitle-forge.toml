@@ -1,18 +1,33 @@
 [defaults]
-provider = "codex"
 source_language = "en"
 target_language = "fa"
 output_format = "srt"
-batch_size = 50
-rtl_mode = "auto"
+cleanup_provider = "codex"
+cleanup_batch_size = 50
+keep_intermediate = false
 
 [providers.codex]
 command = "codex"
 extra_args = ["exec", "--skip-git-repo-check"]
 # model = "gpt-5.5"
-# reasoning_effort = "medium"
+# reasoning_effort = "low"
 
 [translation]
 preserve_names = true
 preserve_formatting = true
 style = "natural subtitle translation"
+
+[quality]
+allowed_latin_names = [
+  "City Hunter",
+  "Kaori",
+  "Kiyoko",
+  "Imamura",
+  "MacDonald",
+  "Olsen Park",
+  "Hong Kong",
+  "Mah Jong",
+  "Thunder Strikers",
+  "Dragon Claw",
+  "White Crane",
+]

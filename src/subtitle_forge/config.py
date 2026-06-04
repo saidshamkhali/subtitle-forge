@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
 
+from subtitle_forge.normalization import DEFAULT_ALLOWED_LATIN_NAMES
+
 
 CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
 
@@ -26,14 +28,15 @@ class TranslationConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    provider: str = "codex"
     source_language: str = "en"
     target_language: str = "fa"
     output_format: str | None = None
-    batch_size: int = 50
-    rtl_mode: str = "auto"
+    cleanup_batch_size: int = 50
+    cleanup_provider: str = "codex"
+    keep_intermediate: bool = False
     codex: CodexProviderConfig = field(default_factory=CodexProviderConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
+    allowed_latin_names: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_LATIN_NAMES))
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -48,15 +51,16 @@ def load_config(path: Path | None = None) -> AppConfig:
     defaults = data.get("defaults", {})
     providers = data.get("providers", {})
     translation = data.get("translation", {})
+    quality = data.get("quality", {})
     codex_data = providers.get("codex", {})
 
     return AppConfig(
-        provider=defaults.get("provider", "codex"),
         source_language=defaults.get("source_language", "en"),
         target_language=defaults.get("target_language", "fa"),
         output_format=defaults.get("output_format"),
-        batch_size=int(defaults.get("batch_size", 50)),
-        rtl_mode=defaults.get("rtl_mode", "auto"),
+        cleanup_batch_size=int(defaults.get("cleanup_batch_size", 50)),
+        cleanup_provider=defaults.get("cleanup_provider", "codex"),
+        keep_intermediate=bool(defaults.get("keep_intermediate", False)),
         codex=CodexProviderConfig(
             command=codex_data.get("command", "codex"),
             extra_args=list(codex_data.get("extra_args", ["exec", "--skip-git-repo-check"])),
@@ -69,6 +73,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             preserve_formatting=bool(translation.get("preserve_formatting", True)),
             prompt=translation.get("prompt"),
         ),
+        allowed_latin_names=list(quality.get("allowed_latin_names", DEFAULT_ALLOWED_LATIN_NAMES)),
     )
 
 

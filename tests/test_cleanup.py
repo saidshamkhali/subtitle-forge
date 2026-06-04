@@ -2,25 +2,31 @@ from datetime import timedelta
 
 import pytest
 
+from subtitle_forge.cleanup import parse_cleanup_response
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.prompting import build_translation_prompt
-from subtitle_forge.providers import MockProvider
-from subtitle_forge.translation import parse_provider_response, translate_cues
+from subtitle_forge.translation import parse_provider_response
 
 
-def test_translate_with_mock_provider():
-    cues = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")]
+def test_cleanup_response_accepts_expected_cue_ids():
+    fixes = parse_cleanup_response('{"1": "سلام."}', ["1"])
 
-    translated = translate_cues(cues, MockProvider("fa"), "en", "fa", TranslationConfig(), batch_size=50)
-
-    assert translated[0].text == "سلام."
-    assert translated[0].start == cues[0].start
-    assert translated[0].end == cues[0].end
+    assert fixes == {"1": "سلام."}
 
 
-def test_missing_cue_fails():
+def test_cleanup_response_rejects_unknown_cue_id():
+    with pytest.raises(TranslationValidationError, match="unknown cue id"):
+        parse_cleanup_response('{"2": "سلام."}', ["1"])
+
+
+def test_cleanup_response_rejects_invalid_json():
+    with pytest.raises(TranslationValidationError, match="not valid JSON"):
+        parse_cleanup_response("not json", ["1"])
+
+
+def test_provider_batch_response_parser_still_rejects_missing_cue():
     batch = [
         SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello."),
         SubtitleCue(id="2", start=timedelta(seconds=3), end=timedelta(seconds=4), text="Good morning."),
@@ -28,21 +34,6 @@ def test_missing_cue_fails():
 
     with pytest.raises(TranslationValidationError, match="Expected 2 translations"):
         parse_provider_response('[{"id": "1", "text": "سلام."}]', batch)
-
-
-def test_invalid_json_fails():
-    batch = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")]
-
-    with pytest.raises(TranslationValidationError, match="not valid JSON"):
-        parse_provider_response("not json", batch)
-
-
-def test_preserves_simple_tags_with_mock_provider():
-    cues = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="<i>Keep moving.</i>")]
-
-    translated = translate_cues(cues, MockProvider("fa"), "en", "fa", TranslationConfig(), batch_size=50)
-
-    assert translated[0].text == "<i>ادامه بده.</i>"
 
 
 def test_persian_prompt_guides_brand_names_and_mixed_direction_ordering():

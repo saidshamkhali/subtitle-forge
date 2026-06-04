@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import subprocess
 from typing import Annotated
 
 import typer
 
+from subtitle_forge.argos import translate_cues_with_argos
+from subtitle_forge.cleanup import cleanup_flagged_cues
 from subtitle_forge.config import (
     AppConfig,
     TranslationConfig,
@@ -13,12 +16,12 @@ from subtitle_forge.config import (
     load_codex_default_reasoning_effort,
     load_config,
 )
-from subtitle_forge.bidi import VALID_RTL_MODES, stabilize_cues_for_rtl_display
 from subtitle_forge.errors import SubtitleForgeError
 from subtitle_forge.executables import resolve_executable
-from subtitle_forge.providers import CodexExecProvider, MockProvider, OpenAICompatibleProvider, TranslationProvider
+from subtitle_forge.normalization import normalize_cues_for_target
+from subtitle_forge.providers import CodexExecProvider, MockProvider, TranslationProvider
+from subtitle_forge.quality import validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
-from subtitle_forge.translation import translate_cues
 
 
 app = typer.Typer(help="Translate existing subtitle files while preserving timings.", no_args_is_help=True)
@@ -62,19 +65,29 @@ def providers(
 ):
     """List available translation providers."""
     config = load_config(config_path)
-    typer.echo(f"Default provider: {config.provider}")
-    typer.echo("Available providers:")
-    typer.echo("- codex: active MVP provider using local Codex CLI")
-    typer.echo("- mock: deterministic local provider for tests and dry runs")
-    typer.echo("- openai-compatible: planned future provider, not active in MVP")
+    typer.echo("Translation pipeline: ArgosTranslate first pass + deterministic normalization + flagged-cue cleanup")
+    typer.echo(f"Cleanup provider: {config.cleanup_provider}")
+    typer.echo("Available cleanup providers:")
+    typer.echo("- codex: uses local Codex CLI for flagged-cue repair")
+    typer.echo("- mock: deterministic local cleanup provider for tests and dry runs")
 
 
 @app.command()
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
 ):
-    """Check local setup for the Codex CLI provider."""
+    """Check local setup for ArgosTranslate and the Codex cleanup provider."""
     config = load_config(config_path)
+    try:
+        import argostranslate.translate
+    except ImportError:
+        typer.secho("Missing: ArgosTranslate Python package was not found.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    installed_languages = argostranslate.translate.get_installed_languages()
+    installed_codes = sorted(language.code for language in installed_languages)
+    typer.echo(f"ArgosTranslate: installed languages: {', '.join(installed_codes) or 'none'}")
+
     command = config.codex.command
     executable = resolve_executable(command)
     if not executable:
@@ -94,7 +107,8 @@ def doctor(
     codex_default_reasoning_effort = load_codex_default_reasoning_effort()
     selected_model = config.codex.model or codex_default_model
     typer.echo(f"Codex CLI: {version}")
-    typer.echo("Provider: codex")
+    typer.echo("Pipeline: ArgosTranslate -> normalize -> validate -> Codex cleanup -> normalize -> validate")
+    typer.echo("Cleanup provider: codex")
     if config.codex.model:
         typer.echo(f"Model: {config.codex.model} from subtitle-forge.toml")
     elif codex_default_model:
@@ -123,47 +137,105 @@ def translate(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
     source_language: Annotated[str | None, typer.Option("--from", help="Source language code/name.")] = None,
     target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
-    provider_name: Annotated[str | None, typer.Option("--provider", help="Provider: codex or mock.")] = None,
     model: Annotated[str | None, typer.Option("--model", help="Optional Codex model override.")] = None,
     reasoning_effort: Annotated[str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")] = None,
+    cleanup_provider_name: Annotated[str | None, typer.Option("--cleanup-provider", help="Cleanup provider: codex or mock.")] = None,
+    cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
+    report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
+    keep_intermediate: Annotated[bool, typer.Option("--keep-intermediate", help="Keep Argos and normalized intermediate files.")] = False,
     output_format: Annotated[str | None, typer.Option("--output-format", help="Output format: srt or vtt.")] = None,
-    batch_size: Annotated[int | None, typer.Option("--batch-size", min=1, help="Number of cues per provider call.")] = None,
-    rtl_mode: Annotated[str | None, typer.Option("--rtl-mode", help="RTL display handling: auto, off, or marks.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
 ):
-    """Translate subtitles using a provider and preserve original timings."""
+    """Translate with Argos first, repair flagged cues with AI, and preserve original timings."""
     config = load_config(config_path)
     source = source_language or config.source_language
     target = target_language or config.target_language
-    selected_provider = provider_name or config.provider
-    selected_batch_size = batch_size or config.batch_size
+    selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
+    selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
     selected_output_format = output_format or output_path.suffix.lstrip(".") or config.output_format
-    selected_rtl_mode = rtl_mode or config.rtl_mode
+    selected_report_path = report_path or output_path.with_suffix(output_path.suffix + ".report.json")
+    selected_keep_intermediate = keep_intermediate or config.keep_intermediate
     translation_config = _merge_translation_config(config.translation, prompt)
 
     try:
-        if selected_rtl_mode.lower() not in VALID_RTL_MODES:
-            expected = ", ".join(sorted(VALID_RTL_MODES))
-            raise SubtitleForgeError(f"Unsupported RTL mode '{selected_rtl_mode}'. Expected one of: {expected}.")
+        cleanup_provider = _build_cleanup_provider(selected_cleanup_provider, config, target, model, reasoning_effort)
+
+        typer.echo("1/6 Reading subtitles")
         cues = read_subtitles(input_path)
-        provider = _build_provider(selected_provider, config, target, model, reasoning_effort)
-        translated = translate_cues(
-            cues=cues,
-            provider=provider,
+
+        typer.echo("2/6 Argos full-file translation")
+        with typer.progressbar(length=len(cues), label="Argos cues") as progress:
+            argos_cues = translate_cues_with_argos(
+                cues,
+                source,
+                target,
+                on_cue=lambda _index, _cue: progress.update(1),
+            )
+
+        typer.echo("3/6 Normalizing Persian subtitle display")
+        normalized_cues = normalize_cues_for_target(argos_cues, target, config.allowed_latin_names)
+        intermediate_paths = _write_intermediate_files(
+            output_path,
+            selected_output_format,
+            argos_cues,
+            normalized_cues,
+            selected_keep_intermediate,
+        )
+
+        typer.echo("4/6 Validating and flagging suspicious cues")
+        initial_report = validate_translation(cues, normalized_cues, config.allowed_latin_names)
+        flagged_ids = initial_report.suspicious_cue_ids
+        typer.echo(f"Flagged suspicious cues: {len(flagged_ids)}")
+
+        batch_count = math.ceil(len(flagged_ids) / selected_cleanup_batch_size) if flagged_ids else 0
+        typer.echo(f"5/6 AI cleanup: {len(flagged_ids)} flagged cues in {batch_count} batches")
+
+        def on_cleanup_batch(index: int, batch_ids: list[str]) -> None:
+            preview = ", ".join(batch_ids[:8])
+            suffix = "..." if len(batch_ids) > 8 else ""
+            typer.echo(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
+
+        with typer.progressbar(length=batch_count, label="Cleanup batches") as progress:
+            cleaned_cues = cleanup_flagged_cues(
+                source_cues=cues,
+                current_cues=normalized_cues,
+                flagged_ids=flagged_ids,
+                issues=initial_report.issues,
+                provider=cleanup_provider,
+                source_language=source,
+                target_language=target,
+                translation_config=translation_config,
+                allowed_latin_names=config.allowed_latin_names,
+                batch_size=selected_cleanup_batch_size,
+                on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
+            )
+
+        typer.echo("6/6 Final normalization, validation, and write")
+        final_cues = normalize_cues_for_target(cleaned_cues, target, config.allowed_latin_names)
+        final_report = validate_translation(cues, final_cues, config.allowed_latin_names)
+        write_subtitles(final_cues, output_path, selected_output_format)
+        _write_report(
+            report_path=selected_report_path,
+            input_path=input_path,
+            output_path=output_path,
             source_language=source,
             target_language=target,
-            translation_config=translation_config,
-            batch_size=selected_batch_size,
+            initial_report=initial_report,
+            final_report=final_report,
+            intermediate_paths=intermediate_paths,
         )
-        translated = stabilize_cues_for_rtl_display(translated, target, selected_rtl_mode)
-        write_subtitles(translated, output_path, selected_output_format)
+        _print_summary(output_path, selected_report_path, len(cues), initial_report, final_report)
+        if not validation_passed(final_report):
+            raise SubtitleForgeError(
+                f"Final validation failed with {len(final_report.suspicious_cue_ids)} suspicious cues remaining."
+            )
     except SubtitleForgeError as exc:
         _fail(exc)
 
-    typer.echo(f"OK: translated {len(translated)} cues to {output_path}")
+    typer.echo(f"OK: translated {len(final_cues)} cues to {output_path}")
 
 
-def _build_provider(
+def _build_cleanup_provider(
     name: str,
     config: AppConfig,
     target_language: str,
@@ -172,12 +244,11 @@ def _build_provider(
 ) -> TranslationProvider:
     normalized = name.lower()
     if normalized == "codex":
-        return CodexExecProvider(config.codex, model=model, reasoning_effort=reasoning_effort)
+        selected_reasoning_effort = reasoning_effort if reasoning_effort is not None else (config.codex.reasoning_effort or "low")
+        return CodexExecProvider(config.codex, model=model, reasoning_effort=selected_reasoning_effort)
     if normalized == "mock":
         return MockProvider(target_language=target_language)
-    if normalized in {"openai", "openai-compatible", "openai_compatible"}:
-        return OpenAICompatibleProvider()
-    raise SubtitleForgeError(f"Unknown provider '{name}'. Expected one of: codex, mock.")
+    raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock.")
 
 
 def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> TranslationConfig:
@@ -191,6 +262,59 @@ def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> 
         preserve_formatting=config.preserve_formatting,
         prompt=merged_prompt,
     )
+
+
+def _write_intermediate_files(
+    output_path: Path,
+    output_format: str,
+    argos_cues,
+    normalized_cues,
+    keep_intermediate: bool,
+) -> dict[str, str]:
+    if not keep_intermediate:
+        return {}
+    argos_path = output_path.with_name(f"{output_path.stem}.argos{output_path.suffix}")
+    normalized_path = output_path.with_name(f"{output_path.stem}.normalized{output_path.suffix}")
+    write_subtitles(argos_cues, argos_path, output_format)
+    write_subtitles(normalized_cues, normalized_path, output_format)
+    return {"argos": str(argos_path), "normalized": str(normalized_path)}
+
+
+def _write_report(
+    report_path: Path,
+    input_path: Path,
+    output_path: Path,
+    source_language: str,
+    target_language: str,
+    initial_report,
+    final_report,
+    intermediate_paths: dict[str, str],
+) -> None:
+    import json
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "input": str(input_path),
+        "output": str(output_path),
+        "source_language": source_language,
+        "target_language": target_language,
+        "initial": initial_report.to_dict(),
+        "final": final_report.to_dict(),
+        "intermediate_paths": intermediate_paths,
+        "validation_passed": validation_passed(final_report),
+    }
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
+
+
+def _print_summary(output_path: Path, report_path: Path, cue_count: int, initial_report, final_report) -> None:
+    typer.echo("Summary")
+    typer.echo(f"Final output: {output_path}")
+    typer.echo(f"Report: {report_path}")
+    typer.echo(f"Cue count: {cue_count}")
+    typer.echo(f"Flagged before cleanup: {len(initial_report.suspicious_cue_ids)}")
+    typer.echo(f"Flagged after cleanup: {len(final_report.suspicious_cue_ids)}")
+    typer.echo(f"Disallowed Latin lines: {final_report.disallowed_latin_dialogue_line_count}")
+    typer.echo(f"Validation: {'passed' if validation_passed(final_report) else 'failed'}")
 
 
 def _fail(exc: Exception) -> None:

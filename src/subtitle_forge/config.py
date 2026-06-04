@@ -31,7 +31,7 @@ class AppConfig:
     source_language: str = "en"
     target_language: str = "fa"
     output_format: str | None = None
-    cleanup_batch_size: int = 50
+    cleanup_batch_size: int = 25
     cleanup_provider: str = "codex"
     keep_intermediate: bool = False
     codex: CodexProviderConfig = field(default_factory=CodexProviderConfig)
@@ -58,7 +58,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         source_language=defaults.get("source_language", "en"),
         target_language=defaults.get("target_language", "fa"),
         output_format=defaults.get("output_format"),
-        cleanup_batch_size=int(defaults.get("cleanup_batch_size", 50)),
+        cleanup_batch_size=int(defaults.get("cleanup_batch_size", 25)),
         cleanup_provider=defaults.get("cleanup_provider", "codex"),
         keep_intermediate=bool(defaults.get("keep_intermediate", False)),
         codex=CodexProviderConfig(

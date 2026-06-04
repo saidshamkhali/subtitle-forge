@@ -95,7 +95,7 @@ source_language = "en"
 target_language = "fa"
 output_format = "srt"
 cleanup_provider = "codex"
-cleanup_batch_size = 50
+cleanup_batch_size = 25
 keep_intermediate = false
 
 [providers.codex]

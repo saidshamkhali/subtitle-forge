@@ -58,9 +58,9 @@ class MockProvider:
     target_language: str = "fa"
 
     def translate_batch(self, prompt: str) -> str:
-        if "Suspicious cues:" in prompt:
+        if "Cues:" in prompt:
             cues = _extract_cleanup_payload(prompt)
-            return json.dumps({cue["id"]: _mock_translate(cue["source_text"], self.target_language) for cue in cues}, ensure_ascii=False)
+            return json.dumps({cue["id"]: _mock_translate(cue["src"], self.target_language) for cue in cues}, ensure_ascii=False)
         cues = _extract_prompt_payload(prompt)
         return json.dumps(
             [{"id": cue["id"], "text": _mock_translate(cue["text"], self.target_language)} for cue in cues],
@@ -112,7 +112,7 @@ def _extract_prompt_payload(prompt: str) -> list[dict[str, str]]:
 
 
 def _extract_cleanup_payload(prompt: str) -> list[dict[str, str]]:
-    marker = "Suspicious cues:\n"
+    marker = "Cues:\n"
     if marker not in prompt:
         raise ProviderError("MockProvider could not find cleanup payload in the prompt.")
     payload = prompt.split(marker, 1)[1].strip()

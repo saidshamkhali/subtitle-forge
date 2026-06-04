@@ -5,7 +5,6 @@ from typing import Callable
 
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
-from subtitle_forge.languages import language_label
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import strip_bidi_and_invisible
 from subtitle_forge.providers import TranslationProvider
@@ -64,10 +63,10 @@ def build_cleanup_prompt(
     translation_config: TranslationConfig,
     allowed_latin_names: list[str],
 ) -> str:
-    issue_map: dict[str, list[dict[str, str]]] = {}
+    issue_map: dict[str, list[str]] = {}
     for issue in issues:
         if issue.cue_id in batch_ids:
-            issue_map.setdefault(issue.cue_id, []).append(issue.to_dict())
+            issue_map.setdefault(issue.cue_id, []).append(issue.code)
 
     payload = []
     for cue_id in batch_ids:
@@ -76,33 +75,17 @@ def build_cleanup_prompt(
         payload.append(
             {
                 "id": cue_id,
-                "timestamp": f"{source.start} --> {source.end}",
-                "source_text": source.text,
-                "argos_text": strip_bidi_and_invisible(current.text),
+                "src": source.text,
+                "mt": strip_bidi_and_invisible(current.text),
                 "issues": issue_map.get(cue_id, []),
             }
         )
 
-    return f"""You are lightly repairing Persian subtitle cues translated by ArgosTranslate.
-
-Return only valid JSON. Do not include markdown, comments, explanations, or extra text.
-The JSON must be an object whose keys are cue ids and whose values are corrected subtitle text strings.
-
-Rules:
-- Translate from {language_label(source_language)} to {language_label(target_language)}.
-- Fix only the listed suspicious cues.
-- Preserve the meaning of source_text.
-- Use argos_text as the baseline when it is usable.
-- Preserve simple tags such as <i>, <b>, and <u>.
-- Preserve line breaks only when they help subtitle readability.
-- Do not include cue numbers or timestamps in the corrected text.
-- Do not return cue ids that are not in the input.
-- Do not leave English/Latin text except these allowed names: {", ".join(allowed_latin_names)}.
-- Return normal UTF-8 Persian text without bidi control characters; the app will add display marks later.
-- Style: {translation_config.style}.
-{f"- Additional project prompt: {translation_config.prompt}" if translation_config.prompt else ""}
-
-Suspicious cues:
+    custom_prompt = f"\nExtra: {translation_config.prompt}" if translation_config.prompt else ""
+    return f"""Repair only these suspicious subtitle cues.
+Return JSON object only: {{"cue_id":"corrected text"}}.
+Rules: {source_language}->{target_language}; use src for meaning; use mt if usable; preserve <i>/<b>/<u>; no cue numbers/timestamps; no bidi controls; no Latin except: {", ".join(allowed_latin_names)}; style: {translation_config.style}.{custom_prompt}
+Cues:
 {json.dumps(payload, ensure_ascii=False)}
 """
 

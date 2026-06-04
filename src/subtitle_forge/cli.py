@@ -161,8 +161,6 @@ def translate(
     timings: list[tuple[str, float]] = []
 
     try:
-        cleanup_provider = _build_cleanup_provider(selected_cleanup_provider, config, target, model, reasoning_effort)
-
         _print_translate_header(input_path, output_path, source, target, selected_cleanup_provider)
 
         stage_started = time.perf_counter()
@@ -213,6 +211,7 @@ def translate(
             _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
 
         if batch_count:
+            cleanup_provider = _build_cleanup_provider(selected_cleanup_provider, config, target, model, reasoning_effort)
             with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
                 cleaned_cues = cleanup_flagged_cues(
                     source_cues=cues,

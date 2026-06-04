@@ -109,6 +109,29 @@ def test_cli_translate_skips_cleanup_progress_when_no_cues_flagged(monkeypatch, 
     assert "Cleanup batches" not in result.stdout
 
 
+def test_cli_translate_does_not_build_cleanup_provider_when_no_cues_flagged(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.srt"
+
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_clean_first_pass)
+    monkeypatch.setattr("subtitle_forge.cli._build_cleanup_provider", _raise_if_cleanup_provider_is_built)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--out",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+
+
 def test_cli_translate_failed_validation_exits_cleanly(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 
@@ -185,3 +208,7 @@ def _fake_cleanup_leaves_cues_unchanged(
     if on_batch:
         on_batch(1, flagged_ids)
     return current_cues
+
+
+def _raise_if_cleanup_provider_is_built(*args, **kwargs):
+    raise AssertionError("cleanup provider should not be built when no cues are flagged")

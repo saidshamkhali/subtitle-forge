@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import subprocess
+import time
 from typing import Annotated
 
 import typer
@@ -156,23 +157,33 @@ def translate(
     selected_report_path = report_path or output_path.with_suffix(output_path.suffix + ".report.json")
     selected_keep_intermediate = keep_intermediate or config.keep_intermediate
     translation_config = _merge_translation_config(config.translation, prompt)
+    started_at = time.perf_counter()
+    timings: list[tuple[str, float]] = []
 
     try:
         cleanup_provider = _build_cleanup_provider(selected_cleanup_provider, config, target, model, reasoning_effort)
 
-        typer.echo("1/6 Reading subtitles")
-        cues = read_subtitles(input_path)
+        _print_translate_header(input_path, output_path, source, target, selected_cleanup_provider)
 
-        typer.echo("2/6 Argos full-file translation")
-        with typer.progressbar(length=len(cues), label="Argos cues") as progress:
+        stage_started = time.perf_counter()
+        _stage("1/6 Reading subtitles", f"Source: {input_path}")
+        cues = read_subtitles(input_path)
+        _detail(f"{len(cues)} cues loaded")
+        timings.append(("Read", time.perf_counter() - stage_started))
+
+        stage_started = time.perf_counter()
+        _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
+        with typer.progressbar(length=len(cues), label="Translating cues") as progress:
             argos_cues = translate_cues_with_argos(
                 cues,
                 source,
                 target,
                 on_cue=lambda _index, _cue: progress.update(1),
             )
+        timings.append(("Argos", time.perf_counter() - stage_started))
 
-        typer.echo("3/6 Normalizing Persian subtitle display")
+        stage_started = time.perf_counter()
+        _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
         normalized_cues = normalize_cues_for_target(argos_cues, target, config.allowed_latin_names)
         intermediate_paths = _write_intermediate_files(
             output_path,
@@ -181,36 +192,48 @@ def translate(
             normalized_cues,
             selected_keep_intermediate,
         )
+        if intermediate_paths:
+            _detail(f"Intermediate files kept: {len(intermediate_paths)}")
+        timings.append(("Normalize", time.perf_counter() - stage_started))
 
-        typer.echo("4/6 Validating and flagging suspicious cues")
+        stage_started = time.perf_counter()
+        _stage("4/6 Validating and flagging suspicious cues", "Checking structure, mojibake, tags, RTL marks, and Latin text")
         initial_report = validate_translation(cues, normalized_cues, config.allowed_latin_names)
         flagged_ids = initial_report.suspicious_cue_ids
-        typer.echo(f"Flagged suspicious cues: {len(flagged_ids)}")
+        _detail(f"Flagged suspicious cues: {len(flagged_ids)}")
+        timings.append(("Validate", time.perf_counter() - stage_started))
 
+        stage_started = time.perf_counter()
         batch_count = math.ceil(len(flagged_ids) / selected_cleanup_batch_size) if flagged_ids else 0
-        typer.echo(f"5/6 AI cleanup: {len(flagged_ids)} flagged cues in {batch_count} batches")
+        _stage("5/6 AI cleanup", f"{len(flagged_ids)} flagged cues in {batch_count} batches")
 
         def on_cleanup_batch(index: int, batch_ids: list[str]) -> None:
             preview = ", ".join(batch_ids[:8])
             suffix = "..." if len(batch_ids) > 8 else ""
-            typer.echo(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
+            _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
 
-        with typer.progressbar(length=batch_count, label="Cleanup batches") as progress:
-            cleaned_cues = cleanup_flagged_cues(
-                source_cues=cues,
-                current_cues=normalized_cues,
-                flagged_ids=flagged_ids,
-                issues=initial_report.issues,
-                provider=cleanup_provider,
-                source_language=source,
-                target_language=target,
-                translation_config=translation_config,
-                allowed_latin_names=config.allowed_latin_names,
-                batch_size=selected_cleanup_batch_size,
-                on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
-            )
+        if batch_count:
+            with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
+                cleaned_cues = cleanup_flagged_cues(
+                    source_cues=cues,
+                    current_cues=normalized_cues,
+                    flagged_ids=flagged_ids,
+                    issues=initial_report.issues,
+                    provider=cleanup_provider,
+                    source_language=source,
+                    target_language=target,
+                    translation_config=translation_config,
+                    allowed_latin_names=config.allowed_latin_names,
+                    batch_size=selected_cleanup_batch_size,
+                    on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
+                )
+        else:
+            _success("No suspicious cues flagged; skipping AI cleanup.")
+            cleaned_cues = normalized_cues
+        timings.append(("Cleanup", time.perf_counter() - stage_started))
 
-        typer.echo("6/6 Final normalization, validation, and write")
+        stage_started = time.perf_counter()
+        _stage("6/6 Final normalization, validation, and write", f"Output: {output_path}")
         final_cues = normalize_cues_for_target(cleaned_cues, target, config.allowed_latin_names)
         final_report = validate_translation(cues, final_cues, config.allowed_latin_names)
         write_subtitles(final_cues, output_path, selected_output_format)
@@ -224,15 +247,19 @@ def translate(
             final_report=final_report,
             intermediate_paths=intermediate_paths,
         )
-        _print_summary(output_path, selected_report_path, len(cues), initial_report, final_report)
+        timings.append(("Finalize", time.perf_counter() - stage_started))
+        elapsed_seconds = time.perf_counter() - started_at
+        _print_summary(output_path, selected_report_path, len(cues), initial_report, final_report, elapsed_seconds, timings)
         if not validation_passed(final_report):
-            raise SubtitleForgeError(
-                f"Final validation failed with {len(final_report.suspicious_cue_ids)} suspicious cues remaining."
+            _warning(
+                f"Final validation failed with {len(final_report.suspicious_cue_ids)} suspicious cues remaining. "
+                f"Review the report: {selected_report_path}"
             )
+            raise typer.Exit(1)
     except SubtitleForgeError as exc:
         _fail(exc)
 
-    typer.echo(f"OK: translated {len(final_cues)} cues to {output_path}")
+    _success(f"Translated {len(final_cues)} cues to {output_path}")
 
 
 def _build_cleanup_provider(
@@ -306,19 +333,73 @@ def _write_report(
     report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
 
 
-def _print_summary(output_path: Path, report_path: Path, cue_count: int, initial_report, final_report) -> None:
-    typer.echo("Summary")
-    typer.echo(f"Final output: {output_path}")
-    typer.echo(f"Report: {report_path}")
-    typer.echo(f"Cue count: {cue_count}")
-    typer.echo(f"Flagged before cleanup: {len(initial_report.suspicious_cue_ids)}")
-    typer.echo(f"Flagged after cleanup: {len(final_report.suspicious_cue_ids)}")
-    typer.echo(f"Disallowed Latin lines: {final_report.disallowed_latin_dialogue_line_count}")
-    typer.echo(f"Validation: {'passed' if validation_passed(final_report) else 'failed'}")
+def _print_translate_header(
+    input_path: Path,
+    output_path: Path,
+    source_language: str,
+    target_language: str,
+    cleanup_provider: str,
+) -> None:
+    typer.echo()
+    typer.secho("Subtitle Forge", fg=typer.colors.MAGENTA, bold=True)
+    typer.echo("Argos first pass -> Persian polish -> targeted AI cleanup")
+    typer.echo("-" * 68)
+    _metric("Input", str(input_path))
+    _metric("Output", str(output_path))
+    _metric("Languages", f"{source_language} -> {target_language}")
+    _metric("Cleanup", cleanup_provider)
+
+
+def _stage(title: str, detail: str | None = None) -> None:
+    typer.echo()
+    typer.secho(f"== {title} ==", fg=typer.colors.CYAN, bold=True)
+    if detail:
+        _detail(detail)
+
+
+def _detail(message: str) -> None:
+    typer.secho(f"   {message}", fg=typer.colors.BRIGHT_BLACK)
+
+
+def _success(message: str) -> None:
+    typer.secho(f"OK  {message}", fg=typer.colors.GREEN)
+
+
+def _warning(message: str) -> None:
+    typer.secho(f"WARN  {message}", fg=typer.colors.YELLOW)
+
+
+def _metric(label: str, value: str) -> None:
+    typer.echo(f"  {label:<10} {value}")
+
+
+def _print_summary(
+    output_path: Path,
+    report_path: Path,
+    cue_count: int,
+    initial_report,
+    final_report,
+    elapsed_seconds: float,
+    timings: list[tuple[str, float]],
+) -> None:
+    passed = validation_passed(final_report)
+    typer.echo()
+    typer.secho("Result", fg=typer.colors.GREEN if passed else typer.colors.YELLOW, bold=True)
+    typer.echo("-" * 68)
+    _metric("Output", str(output_path))
+    _metric("Report", str(report_path))
+    _metric("Cues", str(cue_count))
+    _metric("Flagged", f"{len(initial_report.suspicious_cue_ids)} before cleanup, {len(final_report.suspicious_cue_ids)} after")
+    _metric("Latin", f"{final_report.disallowed_latin_dialogue_line_count} disallowed dialogue lines")
+    _metric("Elapsed", f"{elapsed_seconds:.1f}s")
+    _metric("Status", "passed" if passed else "failed")
+    if timings:
+        timing_text = ", ".join(f"{label} {seconds:.1f}s" for label, seconds in timings)
+        _metric("Timing", timing_text)
 
 
 def _fail(exc: Exception) -> None:
-    typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+    typer.secho(f"Error: {exc}", fg=typer.colors.RED)
     raise typer.Exit(1)
 
 

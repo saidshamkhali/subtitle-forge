@@ -31,6 +31,38 @@ def test_validator_allows_configured_latin_name_inside_persian():
     assert report.disallowed_latin_dialogue_line_count == 0
 
 
+def test_validator_allows_configured_latin_name_only_line():
+    source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Kaori.")]
+    output = [
+        SubtitleCue(
+            id="1",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text=f"{RTL_EMBEDDING}Kaori...{POP_DIRECTIONAL_FORMATTING}",
+        )
+    ]
+
+    report = validate_translation(source, output, ["Kaori"])
+
+    assert report.suspicious_cue_ids == []
+
+
+def test_validator_still_flags_untranslated_latin_only_line():
+    source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")]
+    output = [
+        SubtitleCue(
+            id="1",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text=f"{RTL_EMBEDDING}Hello...{POP_DIRECTIONAL_FORMATTING}",
+        )
+    ]
+
+    report = validate_translation(source, output, ["Kaori"])
+
+    assert "1" in report.suspicious_cue_ids
+
+
 def test_validator_flags_mojibake_and_tag_mismatch():
     source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="<i>Hello.</i>")]
     output = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text=f"{RTL_EMBEDDING}Ã bad{POP_DIRECTIONAL_FORMATTING}")]

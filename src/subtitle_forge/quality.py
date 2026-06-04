@@ -122,7 +122,7 @@ def validate_translation(
 
         for line in cue.text.splitlines() or [cue.text]:
             clean_line = strip_bidi_and_invisible(strip_tags(line))
-            if clean_line.strip() and not PERSIAN_RE.search(clean_line):
+            if clean_line.strip() and not PERSIAN_RE.search(clean_line) and not _line_is_allowed_latin_only(line, allowed_latin_names):
                 issues.append(CueIssue(cue.id, "missing_persian", "Dialogue line has no Persian text.", line))
             if _line_has_disallowed_latin(line, allowed_latin_names):
                 disallowed_latin_count += 1
@@ -184,6 +184,14 @@ def _line_has_disallowed_latin(line: str, allowed_latin_names: list[str]) -> boo
     without_controls = strip_bidi_and_invisible(without_tags)
     without_allowed = strip_allowed_latin_names(without_controls, allowed_latin_names)
     return bool(LATIN_RE.search(without_allowed))
+
+
+def _line_is_allowed_latin_only(line: str, allowed_latin_names: list[str]) -> bool:
+    without_tags = strip_tags(line)
+    without_controls = strip_bidi_and_invisible(without_tags)
+    without_allowed = strip_allowed_latin_names(without_controls, allowed_latin_names)
+    without_punctuation = re.sub(r"[\s\d.,!?;:'\"()\[\]{}<>،؛؟…\\/\-–—_]+", "", without_allowed)
+    return bool(without_controls.strip()) and not without_punctuation
 
 
 def _line_has_repeated_junk(line: str) -> bool:

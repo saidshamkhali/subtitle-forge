@@ -2,15 +2,13 @@
 
 Subtitle Forge translates existing `.srt` and `.vtt` subtitle files while preserving cue timings.
 
-The translation flow is fixed:
+The default workflow is:
 
 1. ArgosTranslate creates a local first-pass translation.
-2. Subtitle Forge normalizes Persian subtitle display marks.
-3. A validator flags only suspicious cues.
-4. Codex CLI repairs only those flagged cues.
-5. Subtitle Forge normalizes again, validates again, and writes the final subtitle plus a JSON report.
-
-Subtitle Forge does not download Argos language packages automatically. Install the required Argos language pair locally before translating.
+2. Subtitle Forge normalizes subtitle display details such as Persian RTL marks.
+3. A validator flags suspicious cues.
+4. Codex CLI repairs only the flagged cues.
+5. Subtitle Forge validates again and writes the final subtitle plus a JSON report.
 
 ## Install
 
@@ -18,78 +16,109 @@ Subtitle Forge does not download Argos language packages automatically. Install 
 python -m pip install -e ".[dev]"
 ```
 
-Check the local setup:
+Argos language packages must already be installed locally. Subtitle Forge does not download them automatically.
+
+Check your setup:
 
 ```bash
 subtitle-forge doctor
-subtitle-forge providers
 ```
 
-Equivalent module form:
+## Translate
+
+Basic translation:
 
 ```bash
-python -m subtitle_forge doctor
-python -m subtitle_forge providers
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt
 ```
 
-## Quick Start
-
-Inspect a file:
+Use CUDA for the Argos first pass:
 
 ```bash
-subtitle-forge inspect examples/movie.en.srt
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt --argos-device cuda
 ```
 
-Validate a file:
+Keep intermediate files:
 
 ```bash
-subtitle-forge validate examples/movie.en.srt
-```
-
-Translate English subtitles to Persian/Farsi:
-
-```bash
-subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt
-```
-
-Keep intermediate Argos and normalized files:
-
-```bash
-subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --keep-intermediate
-```
-
-Use a low-reasoning Codex cleanup pass explicitly:
-
-```bash
-subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --reasoning-effort low
-```
-
-Try Argos GPU execution when CUDA 12.x runtime libraries are installed:
-
-```bash
-subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --argos-device cuda
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt --keep-intermediate
 ```
 
 Write the validation report to a custom path:
 
 ```bash
-subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --report tmp/movie.report.json
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt --report output.report.json
 ```
 
-## Progress Output
+## CLI Commands
 
-The CLI prints the main stages while it runs:
+Show help:
+
+```bash
+subtitle-forge --help
+subtitle-forge translate --help
+```
+
+Commands:
+
+```text
+inspect    Print subtitle metadata.
+validate   Check that a subtitle file can be parsed.
+providers  List cleanup providers used after Argos validation.
+doctor     Check Argos, CUDA, and Codex CLI setup.
+translate  Run the full translation pipeline.
+```
+
+Translate options:
+
+```text
+--out, -o              Final output subtitle path. Required.
+--config, -c           Path to subtitle-forge.toml.
+--from                 Source language code, such as en.
+--to                   Target language code, such as fa.
+--model                Optional Codex cleanup model.
+--reasoning-effort     Optional Codex cleanup reasoning effort.
+--cleanup-provider     Cleanup provider for flagged cues: codex or mock.
+--argos-device         Argos first-pass device: cpu, cuda, or auto.
+--cleanup-batch-size   Flagged cues per cleanup call.
+--report               Validation report path.
+--keep-intermediate    Write Argos and normalized intermediate subtitles.
+--output-format        Output format: srt or vtt.
+--prompt               Additional cleanup prompt instructions.
+```
+
+## CUDA
+
+CUDA is optional. CPU mode is the default and works without GPU setup.
+
+To use CUDA, install CUDA Toolkit 12.x and confirm:
+
+```bash
+subtitle-forge doctor
+```
+
+The CUDA status should say the runtime is loadable. If it is not, run with CPU:
+
+```bash
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt --argos-device cpu
+```
+
+CUDA mainly speeds up the Argos first-pass translation. Cleanup time depends on how many cues are flagged and Codex latency.
+
+## CLI Output
+
+The translate command shows the pipeline stages and final timing:
 
 ```text
 1/6 Reading subtitles
 2/6 Argos full-file translation
 3/6 Normalizing Persian subtitle display
 4/6 Validating and flagging suspicious cues
-5/6 AI cleanup: N flagged cues in M batches
+5/6 AI cleanup
 6/6 Final normalization, validation, and write
 ```
 
-At the end it prints the final output path, report path, cue count, flagged cue counts before and after cleanup, disallowed Latin line count, and validation status.
+The final summary includes output path, report path, cue count, flagged cue counts, validation status, and per-stage timing.
 
 ## Configuration
 
@@ -118,35 +147,10 @@ preserve_formatting = true
 
 [quality]
 allowed_latin_names = [
-  "City Hunter",
-  "Kaori",
-  "Kiyoko",
-  "Imamura",
-  "MacDonald",
-  "Olsen Park",
-  "Hong Kong",
-  "Mah Jong",
-  "Thunder Strikers",
-  "Dragon Claw",
-  "White Crane",
+  "Brand Name",
+  "Character Name",
+  "Place Name",
 ]
 ```
 
 CLI flags override config values.
-
-## Current Scope
-
-Included:
-
-- `.srt` and `.vtt` input.
-- `.srt` and `.vtt` output.
-- ArgosTranslate local first-pass translation.
-- Codex CLI cleanup for flagged cues only.
-- Persian/Farsi RTL display normalization and validation reports.
-
-Not included:
-
-- Audio/video subtitle generation.
-- `.ass` subtitle support.
-- Automatic Argos package downloads.
-- OpenAI API cleanup provider.

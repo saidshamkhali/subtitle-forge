@@ -26,7 +26,10 @@ from subtitle_forge.quality import validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
 
 
-app = typer.Typer(help="Translate existing subtitle files while preserving timings.", no_args_is_help=True)
+app = typer.Typer(
+    help="Translate subtitles with ArgosTranslate, deterministic validation, and targeted Codex cleanup.",
+    no_args_is_help=True,
+)
 
 
 @app.command()
@@ -65,7 +68,7 @@ def validate(
 def providers(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
 ):
-    """List available translation providers."""
+    """List cleanup providers used after Argos validation."""
     config = load_config(config_path)
     typer.echo("Translation pipeline: ArgosTranslate first pass + deterministic normalization + flagged-cue cleanup")
     typer.echo(f"Cleanup provider: {config.cleanup_provider}")
@@ -143,15 +146,15 @@ def translate(
     target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
     model: Annotated[str | None, typer.Option("--model", help="Optional Codex model override.")] = None,
     reasoning_effort: Annotated[str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")] = None,
-    cleanup_provider_name: Annotated[str | None, typer.Option("--cleanup-provider", help="Cleanup provider: codex or mock.")] = None,
-    argos_device: Annotated[str | None, typer.Option("--argos-device", help="Argos device: cpu, cuda, or auto.")] = None,
+    cleanup_provider_name: Annotated[str | None, typer.Option("--cleanup-provider", help="Cleanup provider for flagged cues: codex or mock.")] = None,
+    argos_device: Annotated[str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")] = None,
     cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
     report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
     keep_intermediate: Annotated[bool, typer.Option("--keep-intermediate", help="Keep Argos and normalized intermediate files.")] = False,
     output_format: Annotated[str | None, typer.Option("--output-format", help="Output format: srt or vtt.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
 ):
-    """Translate with Argos first, repair flagged cues with AI, and preserve original timings."""
+    """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
     config = load_config(config_path)
     source = source_language or config.source_language
     target = target_language or config.target_language

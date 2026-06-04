@@ -31,6 +31,7 @@ class AppConfig:
     source_language: str = "en"
     target_language: str = "fa"
     output_format: str | None = None
+    argos_device: str = "cpu"
     cleanup_batch_size: int = 25
     cleanup_provider: str = "codex"
     keep_intermediate: bool = False
@@ -58,6 +59,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         source_language=defaults.get("source_language", "en"),
         target_language=defaults.get("target_language", "fa"),
         output_format=defaults.get("output_format"),
+        argos_device=defaults.get("argos_device", "cpu"),
         cleanup_batch_size=int(defaults.get("cleanup_batch_size", 25)),
         cleanup_provider=defaults.get("cleanup_provider", "codex"),
         keep_intermediate=bool(defaults.get("keep_intermediate", False)),

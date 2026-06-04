@@ -64,6 +64,12 @@ Use a low-reasoning Codex cleanup pass explicitly:
 subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --reasoning-effort low
 ```
 
+Try Argos GPU execution when CUDA 12.x runtime libraries are installed:
+
+```bash
+subtitle-forge translate examples/movie.en.srt --from en --to fa --out examples/movie.fa.srt --argos-device cuda
+```
+
 Write the validation report to a custom path:
 
 ```bash
@@ -94,6 +100,7 @@ Create `subtitle-forge.toml` in the project or working directory:
 source_language = "en"
 target_language = "fa"
 output_format = "srt"
+argos_device = "cpu"
 cleanup_provider = "codex"
 cleanup_batch_size = 25
 keep_intermediate = false

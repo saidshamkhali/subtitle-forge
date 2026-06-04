@@ -39,6 +39,7 @@ def run_hybrid_translation(
     allowed_latin_names: list[str],
     cleanup_batch_size: int,
     keep_intermediate: bool,
+    argos_device: str | None = None,
     argos_translator: TextTranslator | None = None,
     on_stage: Callable[[str], None] | None = None,
     on_argos_cue: Callable[[int, SubtitleCue], None] | None = None,
@@ -53,6 +54,7 @@ def run_hybrid_translation(
         source_language,
         target_language,
         translator=argos_translator,
+        device_type=argos_device,
         on_cue=on_argos_cue,
     )
 

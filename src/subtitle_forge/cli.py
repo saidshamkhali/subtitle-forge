@@ -5,10 +5,11 @@ from pathlib import Path
 import subprocess
 import time
 from typing import Annotated
+import ctypes
 
 import typer
 
-from subtitle_forge.argos import translate_cues_with_argos
+from subtitle_forge.argos import VALID_ARGOS_DEVICES, configure_cuda_dll_directories, translate_cues_with_argos
 from subtitle_forge.cleanup import cleanup_flagged_cues
 from subtitle_forge.config import (
     AppConfig,
@@ -88,6 +89,8 @@ def doctor(
     installed_languages = argostranslate.translate.get_installed_languages()
     installed_codes = sorted(language.code for language in installed_languages)
     typer.echo(f"ArgosTranslate: installed languages: {', '.join(installed_codes) or 'none'}")
+    typer.echo(f"Argos device default: {config.argos_device}")
+    typer.echo(f"CUDA status: {_cuda_status()}")
 
     command = config.codex.command
     executable = resolve_executable(command)
@@ -141,6 +144,7 @@ def translate(
     model: Annotated[str | None, typer.Option("--model", help="Optional Codex model override.")] = None,
     reasoning_effort: Annotated[str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")] = None,
     cleanup_provider_name: Annotated[str | None, typer.Option("--cleanup-provider", help="Cleanup provider: codex or mock.")] = None,
+    argos_device: Annotated[str | None, typer.Option("--argos-device", help="Argos device: cpu, cuda, or auto.")] = None,
     cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
     report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
     keep_intermediate: Annotated[bool, typer.Option("--keep-intermediate", help="Keep Argos and normalized intermediate files.")] = False,
@@ -152,6 +156,7 @@ def translate(
     source = source_language or config.source_language
     target = target_language or config.target_language
     selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
+    selected_argos_device = argos_device or config.argos_device
     selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
     selected_output_format = output_format or output_path.suffix.lstrip(".") or config.output_format
     selected_report_path = report_path or output_path.with_suffix(output_path.suffix + ".report.json")
@@ -161,7 +166,20 @@ def translate(
     timings: list[tuple[str, float]] = []
 
     try:
-        _print_translate_header(input_path, output_path, source, target, selected_cleanup_provider)
+        if selected_argos_device not in VALID_ARGOS_DEVICES:
+            expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
+            raise SubtitleForgeError(f"Unsupported Argos device '{selected_argos_device}'. Expected one of: {expected}.")
+        if selected_argos_device == "cuda":
+            cuda_status = _cuda_status()
+            if "CUDA runtime looks loadable" not in cuda_status:
+                raise SubtitleForgeError(
+                    "Argos GPU mode requires the CUDA 12.x runtime libraries. "
+                    f"Current CUDA status: {cuda_status}. "
+                    "Install CUDA Toolkit 12.x and make sure its 'bin' directory is on PATH, "
+                    "or rerun with '--argos-device cpu'."
+                )
+
+        _print_translate_header(input_path, output_path, source, target, selected_cleanup_provider, selected_argos_device)
 
         stage_started = time.perf_counter()
         _stage("1/6 Reading subtitles", f"Source: {input_path}")
@@ -176,6 +194,7 @@ def translate(
                 cues,
                 source,
                 target,
+                device_type=selected_argos_device,
                 on_cue=lambda _index, _cue: progress.update(1),
             )
         timings.append(("Argos", time.perf_counter() - stage_started))
@@ -338,6 +357,7 @@ def _print_translate_header(
     source_language: str,
     target_language: str,
     cleanup_provider: str,
+    argos_device: str,
 ) -> None:
     typer.echo()
     typer.secho("Subtitle Forge", fg=typer.colors.MAGENTA, bold=True)
@@ -346,6 +366,7 @@ def _print_translate_header(
     _metric("Input", str(input_path))
     _metric("Output", str(output_path))
     _metric("Languages", f"{source_language} -> {target_language}")
+    _metric("Argos", argos_device)
     _metric("Cleanup", cleanup_provider)
 
 
@@ -400,6 +421,30 @@ def _print_summary(
 def _fail(exc: Exception) -> None:
     typer.secho(f"Error: {exc}", fg=typer.colors.RED)
     raise typer.Exit(1)
+
+
+def _cuda_status() -> str:
+    try:
+        import ctranslate2
+    except ImportError:
+        return "CTranslate2 is not installed"
+
+    try:
+        device_count = ctranslate2.get_cuda_device_count()
+    except Exception as exc:
+        return f"CUDA check failed: {exc}"
+
+    if device_count < 1:
+        return "no CUDA device visible to CTranslate2"
+
+    added_dirs = configure_cuda_dll_directories()
+    try:
+        ctypes.CDLL("cublas64_12.dll")
+    except OSError:
+        return f"{device_count} CUDA device(s), but cublas64_12.dll is not loadable"
+
+    detail = f" via {added_dirs[0]}" if added_dirs else ""
+    return f"{device_count} CUDA device(s), CUDA runtime looks loadable{detail}"
 
 
 if __name__ == "__main__":

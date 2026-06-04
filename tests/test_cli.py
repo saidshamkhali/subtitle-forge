@@ -160,7 +160,35 @@ def test_cli_translate_failed_validation_exits_cleanly(monkeypatch, tmp_path):
     assert output.exists()
 
 
-def _fake_argos_bad_first_pass(cues, source_language, target_language, translator=None, on_cue=None):
+def test_cli_translate_cuda_without_runtime_fails_early(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.srt"
+
+    monkeypatch.setattr("subtitle_forge.cli._cuda_status", lambda: "1 CUDA device(s), but cublas64_12.dll is not loadable")
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _raise_if_argos_translation_runs)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--out",
+            str(output),
+            "--argos-device",
+            "cuda",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "CUDA 12.x runtime libraries" in result.stdout
+    assert "--argos-device cpu" in result.stdout
+    assert "Traceback" not in result.stdout
+
+
+def _fake_argos_bad_first_pass(cues, source_language, target_language, translator=None, device_type=None, on_cue=None):
     translated = []
     for index, cue in enumerate(cues, start=1):
         if on_cue:
@@ -169,7 +197,7 @@ def _fake_argos_bad_first_pass(cues, source_language, target_language, translato
     return translated
 
 
-def _fake_argos_clean_first_pass(cues, source_language, target_language, translator=None, on_cue=None):
+def _fake_argos_clean_first_pass(cues, source_language, target_language, translator=None, device_type=None, on_cue=None):
     translations = {
         "Hello.": "سلام.",
         "Welcome to Subtitle Forge.": "به City Hunter خوش آمدید.",
@@ -183,7 +211,7 @@ def _fake_argos_clean_first_pass(cues, source_language, target_language, transla
     return translated
 
 
-def _fake_argos_unfixable_first_pass(cues, source_language, target_language, translator=None, on_cue=None):
+def _fake_argos_unfixable_first_pass(cues, source_language, target_language, translator=None, device_type=None, on_cue=None):
     translated = []
     for index, cue in enumerate(cues, start=1):
         if on_cue:
@@ -212,3 +240,7 @@ def _fake_cleanup_leaves_cues_unchanged(
 
 def _raise_if_cleanup_provider_is_built(*args, **kwargs):
     raise AssertionError("cleanup provider should not be built when no cues are flagged")
+
+
+def _raise_if_argos_translation_runs(*args, **kwargs):
+    raise AssertionError("Argos translation should not start when CUDA preflight fails")

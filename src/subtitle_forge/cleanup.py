@@ -70,6 +70,10 @@ def build_cleanup_prompt(
 
     payload = []
     for cue_id in batch_ids:
+        if cue_id not in source_by_id:
+            raise TranslationValidationError(f"Cannot cleanup cue {cue_id!r}: source cue id is missing.")
+        if cue_id not in current_by_id:
+            raise TranslationValidationError(f"Cannot cleanup cue {cue_id!r}: current cue id is missing.")
         source = source_by_id[cue_id]
         current = current_by_id[cue_id]
         payload.append(

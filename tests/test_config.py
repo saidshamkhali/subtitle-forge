@@ -11,7 +11,6 @@ def test_load_config_accepts_valid_values(tmp_path):
 [defaults]
 source_language = "en"
 target_language = "fa"
-output_format = "vtt"
 argos_device = "cuda"
 cleanup_provider = "mock"
 cleanup_batch_size = 3
@@ -34,7 +33,6 @@ allowed_latin_names = ["City Hunter"]
 
     config = load_config(path)
 
-    assert config.output_format == "vtt"
     assert config.argos_device == "cuda"
     assert config.cleanup_provider == "mock"
     assert config.cleanup_batch_size == 3
@@ -55,20 +53,6 @@ cleanup_batch_size = 0
     )
 
     with pytest.raises(SubtitleForgeError, match="cleanup_batch_size"):
-        load_config(path)
-
-
-def test_load_config_rejects_invalid_output_format(tmp_path):
-    path = tmp_path / "subtitle-forge.toml"
-    path.write_text(
-        """
-[defaults]
-output_format = "ass"
-""",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SubtitleForgeError, match="output_format"):
         load_config(path)
 
 

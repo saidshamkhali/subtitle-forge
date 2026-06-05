@@ -9,7 +9,6 @@ from subtitle_forge.normalization import DEFAULT_ALLOWED_LATIN_NAMES
 
 
 CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
-SUPPORTED_OUTPUT_FORMATS = {"srt", "vtt"}
 VALID_ARGOS_DEVICES = {"auto", "cpu", "cuda"}
 VALID_CLEANUP_PROVIDERS = {"codex", "mock"}
 
@@ -34,7 +33,6 @@ class TranslationConfig:
 class AppConfig:
     source_language: str = "en"
     target_language: str = "fa"
-    output_format: str | None = None
     argos_device: str = "cpu"
     cleanup_batch_size: int = 25
     cleanup_provider: str = "codex"
@@ -66,7 +64,6 @@ def load_config(path: Path | None = None) -> AppConfig:
     return AppConfig(
         source_language=_string(defaults, "source_language", "en", config_path),
         target_language=_string(defaults, "target_language", "fa", config_path),
-        output_format=_optional_choice(defaults, "output_format", SUPPORTED_OUTPUT_FORMATS, config_path),
         argos_device=_choice(defaults, "argos_device", "cpu", VALID_ARGOS_DEVICES, config_path),
         cleanup_batch_size=_positive_int(defaults, "cleanup_batch_size", 25, config_path),
         cleanup_provider=_choice(defaults, "cleanup_provider", "codex", VALID_CLEANUP_PROVIDERS, config_path),
@@ -116,17 +113,6 @@ def _choice(data: dict, key: str, default: str, choices: set[str], config_path: 
         expected = ", ".join(sorted(choices))
         raise SubtitleForgeError(f"Config value '{key}' in {config_path} must be one of: {expected}.")
     return value
-
-
-def _optional_choice(data: dict, key: str, choices: set[str], config_path: Path) -> str | None:
-    value = _optional_string(data, key, config_path)
-    if value is None:
-        return None
-    normalized = value.lower()
-    if normalized not in choices:
-        expected = ", ".join(sorted(choices))
-        raise SubtitleForgeError(f"Config value '{key}' in {config_path} must be one of: {expected}.")
-    return normalized
 
 
 def _positive_int(data: dict, key: str, default: int, config_path: Path) -> int:

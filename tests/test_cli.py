@@ -20,6 +20,13 @@ def test_cli_validate_example():
     assert "OK: parsed 3 cues" in result.stdout
 
 
+def test_cli_translate_help_does_not_include_output_format_option():
+    result = runner.invoke(app, ["translate", "--help"])
+
+    assert result.exit_code == 0
+    assert "--output-format" not in result.stdout
+
+
 def test_cli_providers():
     result = runner.invoke(app, ["providers"])
 
@@ -27,6 +34,25 @@ def test_cli_providers():
     assert "ArgosTranslate" in result.stdout
     assert "codex" in result.stdout
     assert "mock" in result.stdout
+
+
+def test_cli_doctor_skips_codex_check_for_mock_cleanup(monkeypatch, tmp_path):
+    config = tmp_path / "subtitle-forge.toml"
+    config.write_text(
+        """
+[defaults]
+cleanup_provider = "mock"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("subtitle_forge.cli._cuda_status", lambda: "test cuda status")
+    monkeypatch.setattr("subtitle_forge.cli.resolve_executable", _raise_if_codex_resolution_runs)
+
+    result = runner.invoke(app, ["doctor", "--config", str(config)])
+
+    assert result.exit_code == 0
+    assert "Cleanup provider: mock" in result.stdout
+    assert "Codex CLI: skipped because cleanup provider is 'mock'" in result.stdout
 
 
 def test_cli_translate_with_mock_cleanup(monkeypatch, tmp_path):
@@ -58,7 +84,7 @@ def test_cli_translate_with_mock_cleanup(monkeypatch, tmp_path):
     assert "No suspicious cues flagged; skipping AI cleanup." not in result.stdout
 
 
-def test_cli_translate_uses_output_extension_over_config_default(monkeypatch, tmp_path):
+def test_cli_translate_writes_vtt_when_output_extension_is_vtt(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.vtt"
 
     monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_bad_first_pass)
@@ -81,6 +107,31 @@ def test_cli_translate_uses_output_extension_over_config_default(monkeypatch, tm
 
     assert result.exit_code == 0
     assert output.read_text(encoding="utf-8").startswith("WEBVTT")
+
+
+def test_cli_translate_inherits_input_format_when_output_has_no_subtitle_extension(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa"
+
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_bad_first_pass)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--cleanup-provider",
+            "mock",
+            "--out",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.read_text(encoding="utf-8").lstrip().startswith("1\n")
 
 
 def test_cli_translate_allows_srt_input_with_vtt_output(monkeypatch, tmp_path):
@@ -106,32 +157,6 @@ def test_cli_translate_allows_srt_input_with_vtt_output(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert output.read_text(encoding="utf-8").startswith("WEBVTT")
-
-
-def test_cli_translate_rejects_output_extension_format_mismatch(monkeypatch, tmp_path):
-    output = tmp_path / "movie.fa.srt"
-
-    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _raise_if_argos_translation_runs)
-
-    result = runner.invoke(
-        app,
-        [
-            "translate",
-            "examples/movie.en.srt",
-            "--from",
-            "en",
-            "--to",
-            "fa",
-            "--out",
-            str(output),
-            "--output-format",
-            "vtt",
-        ],
-    )
-
-    assert result.exit_code == 1
-    assert "conflicts with --output-format vtt" in result.stdout
-    assert "Traceback" not in result.stdout
 
 
 def test_cli_translate_skips_cleanup_progress_when_no_cues_flagged(monkeypatch, tmp_path):
@@ -387,3 +412,7 @@ def _raise_if_argos_translation_runs(*args, **kwargs):
 
 def _raise_if_argos_package_install_runs(*args, **kwargs):
     raise AssertionError("Argos package install should be opt-in")
+
+
+def _raise_if_codex_resolution_runs(*args, **kwargs):
+    raise AssertionError("Codex executable should not be resolved for mock cleanup")

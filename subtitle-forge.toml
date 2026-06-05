@@ -1,7 +1,6 @@
 [defaults]
 source_language = "en"
 target_language = "fa"
-output_format = "srt"
 argos_device = "cpu"
 cleanup_provider = "codex"
 cleanup_batch_size = 25

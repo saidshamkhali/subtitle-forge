@@ -99,6 +99,12 @@ def doctor(
     typer.echo(f"ArgosTranslate: installed languages: {', '.join(installed_codes) or 'none'}")
     typer.echo(f"Argos device default: {config.argos_device}")
     typer.echo(f"CUDA status: {_cuda_status()}")
+    typer.echo("Pipeline: ArgosTranslate -> normalize -> validate -> cleanup -> normalize -> validate")
+    typer.echo(f"Cleanup provider: {config.cleanup_provider}")
+
+    if config.cleanup_provider != "codex":
+        typer.echo(f"Codex CLI: skipped because cleanup provider is '{config.cleanup_provider}'")
+        return
 
     command = config.codex.command
     executable = resolve_executable(command)
@@ -119,8 +125,6 @@ def doctor(
     codex_default_reasoning_effort = load_codex_default_reasoning_effort()
     selected_model = config.codex.model or codex_default_model
     typer.echo(f"Codex CLI: {version}")
-    typer.echo("Pipeline: ArgosTranslate -> normalize -> validate -> Codex cleanup -> normalize -> validate")
-    typer.echo("Cleanup provider: codex")
     if config.codex.model:
         typer.echo(f"Model: {config.codex.model} from subtitle-forge.toml")
     elif codex_default_model:
@@ -163,7 +167,6 @@ def translate(
             help="Download and install the requested Argos language package. Without input, install and exit.",
         ),
     ] = False,
-    output_format: Annotated[str | None, typer.Option("--output-format", help="Output format: srt or vtt.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
 ):
     """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
@@ -173,7 +176,6 @@ def translate(
     selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
     selected_argos_device = argos_device or config.argos_device
     selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
-    selected_output_format = output_format or (output_path.suffix.lstrip(".") if output_path else None) or config.output_format
     selected_report_path = report_path or (output_path.with_suffix(output_path.suffix + ".report.json") if output_path else None)
     selected_keep_intermediate = keep_intermediate or config.keep_intermediate
     translation_config = _merge_translation_config(config.translation, prompt)
@@ -193,9 +195,9 @@ def translate(
             raise SubtitleForgeError(f"Input subtitle file was not found: {input_path}")
         if output_path is None:
             raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
+        selected_output_format = _resolve_output_format(input_path, output_path)
         if selected_report_path is None:
             raise SubtitleForgeError("Validation report path could not be resolved.")
-        _validate_output_format_choice(output_path, output_format)
         if selected_argos_device not in VALID_ARGOS_DEVICES:
             expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
             raise SubtitleForgeError(f"Unsupported Argos device '{selected_argos_device}'. Expected one of: {expected}.")
@@ -329,6 +331,13 @@ def _build_cleanup_provider(
     raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock.")
 
 
+def _resolve_output_format(input_path: Path, output_path: Path) -> str:
+    output_suffix = output_path.suffix.lstrip(".").lower()
+    if output_suffix in {"srt", "vtt"}:
+        return output_suffix
+    return detect_format(input_path)
+
+
 def _load_config_or_fail(config_path: Path | None) -> AppConfig:
     try:
         return load_config(config_path)
@@ -343,18 +352,6 @@ def _install_argos_package_for_cli(source_language: str, target_language: str) -
         _success(f"Installed Argos package {source_language} -> {target_language}.")
     else:
         _detail(f"Argos translation path already installed: {source_language} -> {target_language}")
-
-
-def _validate_output_format_choice(output_path: Path, explicit_output_format: str | None) -> None:
-    if explicit_output_format is None:
-        return
-    suffix_format = output_path.suffix.lstrip(".").lower()
-    requested_format = explicit_output_format.lower()
-    if suffix_format in {"srt", "vtt"} and suffix_format != requested_format:
-        raise SubtitleForgeError(
-            f"Output path extension '.{suffix_format}' conflicts with --output-format {requested_format}. "
-            f"Use an output path ending in '.{requested_format}', or remove --output-format."
-        )
 
 
 def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> TranslationConfig:

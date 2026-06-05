@@ -57,13 +57,17 @@ subtitle-forge translate input.en.srt --from en --to fa --out output.fa.vtt
 subtitle-forge translate input.en.vtt --from en --to fa --out output.fa.srt
 ```
 
-The output format is inferred from `--out`; use `.srt` or `.vtt`. Use `--output-format` only for extensionless or custom output names:
+The output format is inferred from `--out` when it ends in `.srt` or `.vtt`:
 
 ```bash
-subtitle-forge translate input.en.srt --from en --to fa --out output.fa --output-format vtt
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.vtt
 ```
 
-Subtitle Forge rejects conflicting output choices, such as `--out output.fa.srt --output-format vtt`.
+If `--out` does not end in `.srt` or `.vtt`, Subtitle Forge inherits the input file format:
+
+```bash
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa
+```
 
 Use CUDA for the Argos first pass:
 
@@ -120,7 +124,6 @@ input_path             Subtitle file to translate. Optional only when using --in
 --install-argos-package
                        Download and install the requested Argos language package.
                        If no input file is provided, install the package and exit.
---output-format        Output format: srt or vtt.
 --prompt               Additional cleanup prompt instructions.
 ```
 
@@ -165,7 +168,6 @@ Create `subtitle-forge.toml` in the project or working directory:
 [defaults]
 source_language = "en"
 target_language = "fa"
-output_format = "srt"
 argos_device = "cpu"
 cleanup_provider = "codex"
 cleanup_batch_size = 25

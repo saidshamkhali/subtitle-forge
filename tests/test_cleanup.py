@@ -46,6 +46,38 @@ def test_cleanup_prompt_uses_compact_payload():
     assert '"timestamp":' not in prompt
 
 
+def test_cleanup_prompt_rejects_missing_source_cue_id():
+    cue = SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")
+
+    with pytest.raises(TranslationValidationError, match="source cue id is missing"):
+        build_cleanup_prompt(
+            batch_ids=["2"],
+            source_by_id={"1": cue},
+            current_by_id={"2": cue.with_text("Hello.")},
+            issues=[],
+            source_language="en",
+            target_language="fa",
+            translation_config=TranslationConfig(),
+            allowed_latin_names=[],
+        )
+
+
+def test_cleanup_prompt_rejects_missing_current_cue_id():
+    cue = SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")
+
+    with pytest.raises(TranslationValidationError, match="current cue id is missing"):
+        build_cleanup_prompt(
+            batch_ids=["1"],
+            source_by_id={"1": cue},
+            current_by_id={"2": cue.with_text("Hello.")},
+            issues=[],
+            source_language="en",
+            target_language="fa",
+            translation_config=TranslationConfig(),
+            allowed_latin_names=[],
+        )
+
+
 def test_provider_batch_response_parser_still_rejects_missing_cue():
     batch = [
         SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello."),

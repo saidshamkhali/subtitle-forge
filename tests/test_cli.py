@@ -160,6 +160,94 @@ def test_cli_translate_failed_validation_exits_cleanly(monkeypatch, tmp_path):
     assert output.exists()
 
 
+def test_cli_translate_installs_argos_package_when_requested(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.srt"
+    calls = []
+
+    def fake_install_argos_package(source_language, target_language, on_status=None):
+        calls.append((source_language, target_language))
+        if on_status:
+            on_status("fake Argos package setup")
+        return True
+
+    monkeypatch.setattr("subtitle_forge.cli.install_argos_language_package", fake_install_argos_package)
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_clean_first_pass)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--cleanup-provider",
+            "mock",
+            "--out",
+            str(output),
+            "--install-argos-package",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("en", "fa")]
+    assert "Argos package setup" in result.stdout
+    assert "fake Argos package setup" in result.stdout
+
+
+def test_cli_translate_installs_argos_package_without_translating(monkeypatch):
+    calls = []
+
+    def fake_install_argos_package(source_language, target_language, on_status=None):
+        calls.append((source_language, target_language))
+        return False
+
+    monkeypatch.setattr("subtitle_forge.cli.install_argos_language_package", fake_install_argos_package)
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _raise_if_argos_translation_runs)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--install-argos-package",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("en", "fa")]
+    assert "Argos translation path already installed: en -> fa" in result.stdout
+
+
+def test_cli_translate_does_not_install_argos_package_by_default(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.srt"
+
+    monkeypatch.setattr("subtitle_forge.cli.install_argos_language_package", _raise_if_argos_package_install_runs)
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_clean_first_pass)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--cleanup-provider",
+            "mock",
+            "--out",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+
+
 def test_cli_translate_cuda_without_runtime_fails_early(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 
@@ -244,3 +332,7 @@ def _raise_if_cleanup_provider_is_built(*args, **kwargs):
 
 def _raise_if_argos_translation_runs(*args, **kwargs):
     raise AssertionError("Argos translation should not start when CUDA preflight fails")
+
+
+def _raise_if_argos_package_install_runs(*args, **kwargs):
+    raise AssertionError("Argos package install should be opt-in")

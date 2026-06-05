@@ -67,15 +67,99 @@ def get_argos_translation(source_language: str, target_language: str) -> TextTra
     target = next((language for language in installed if language.code == target_language), None)
     if source is None:
         codes = ", ".join(sorted(language.code for language in installed)) or "none"
-        raise ProviderError(f"Argos source language is not installed: {source_language}. Installed: {codes}.")
+        raise ProviderError(
+            f"Argos source language is not installed: {source_language}. Installed: {codes}. "
+            f"Install the package with: {_argos_install_command(source_language, target_language)}"
+        )
     if target is None:
         codes = ", ".join(sorted(language.code for language in installed)) or "none"
-        raise ProviderError(f"Argos target language is not installed: {target_language}. Installed: {codes}.")
+        raise ProviderError(
+            f"Argos target language is not installed: {target_language}. Installed: {codes}. "
+            f"Install the package with: {_argos_install_command(source_language, target_language)}"
+        )
 
     translation = source.get_translation(target)
     if translation is None:
-        raise ProviderError(f"Argos translation path is not installed: {source_language} -> {target_language}.")
+        raise ProviderError(
+            f"Argos translation path is not installed: {source_language} -> {target_language}. "
+            f"Install it with: {_argos_install_command(source_language, target_language)}"
+        )
     return translation
+
+
+def install_argos_package(
+    source_language: str,
+    target_language: str,
+    on_status: Callable[[str], None] | None = None,
+) -> bool:
+    """Install the direct Argos package for the requested language pair.
+
+    Returns True when a package was downloaded/installed and False when an
+    installed translation path already exists.
+    """
+    try:
+        import argostranslate.package as argos_package
+        import argostranslate.translate as argos_translate
+    except ImportError as exc:
+        raise ProviderError(
+            "ArgosTranslate is required for Subtitle Forge. Install project dependencies, then retry."
+        ) from exc
+
+    if _find_argos_translation(argos_translate, source_language, target_language) is not None:
+        return False
+
+    _emit_status(on_status, "Refreshing Argos package index")
+    try:
+        argos_package.update_package_index()
+        available_packages = argos_package.get_available_packages()
+    except Exception as exc:
+        raise ProviderError(f"Could not refresh Argos package index: {exc}") from exc
+
+    available_package = next(
+        (
+            package
+            for package in available_packages
+            if getattr(package, "from_code", None) == source_language
+            and getattr(package, "to_code", None) == target_language
+            and getattr(package, "type", "translate") == "translate"
+        ),
+        None,
+    )
+    if available_package is None:
+        raise ProviderError(f"No Argos package is available for {source_language} -> {target_language}.")
+
+    try:
+        _emit_status(on_status, f"Downloading Argos package {source_language} -> {target_language}")
+        download_path = available_package.download()
+        _emit_status(on_status, f"Installing Argos package from {download_path}")
+        argos_package.install_from_path(download_path)
+    except Exception as exc:
+        raise ProviderError(f"Failed to install Argos package {source_language} -> {target_language}: {exc}") from exc
+
+    if _find_argos_translation(argos_translate, source_language, target_language) is None:
+        raise ProviderError(
+            f"Argos package install completed, but translation path is still unavailable: "
+            f"{source_language} -> {target_language}."
+        )
+    return True
+
+
+def _find_argos_translation(argos_translate, source_language: str, target_language: str) -> TextTranslator | None:
+    installed = argos_translate.get_installed_languages()
+    source = next((language for language in installed if language.code == source_language), None)
+    target = next((language for language in installed if language.code == target_language), None)
+    if source is None or target is None:
+        return None
+    return source.get_translation(target)
+
+
+def _emit_status(on_status: Callable[[str], None] | None, message: str) -> None:
+    if on_status:
+        on_status(message)
+
+
+def _argos_install_command(source_language: str, target_language: str) -> str:
+    return f"subtitle-forge translate --from {source_language} --to {target_language} --install-argos-package"
 
 
 def configure_cuda_dll_directories() -> list[Path]:

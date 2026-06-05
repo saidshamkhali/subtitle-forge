@@ -9,7 +9,12 @@ import ctypes
 
 import typer
 
-from subtitle_forge.argos import VALID_ARGOS_DEVICES, configure_cuda_dll_directories, translate_cues_with_argos
+from subtitle_forge.argos import (
+    VALID_ARGOS_DEVICES,
+    configure_cuda_dll_directories,
+    install_argos_package as install_argos_language_package,
+    translate_cues_with_argos,
+)
 from subtitle_forge.cleanup import cleanup_flagged_cues
 from subtitle_forge.config import (
     AppConfig,
@@ -139,8 +144,8 @@ def doctor(
 
 @app.command()
 def translate(
-    input_path: Annotated[Path, typer.Argument(exists=True, readable=True, help="Subtitle file to translate.")],
-    output_path: Annotated[Path, typer.Option("--out", "-o", help="Output subtitle path.")],
+    input_path: Annotated[Path | None, typer.Argument(help="Subtitle file to translate.")] = None,
+    output_path: Annotated[Path | None, typer.Option("--out", "-o", help="Output subtitle path.")] = None,
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
     source_language: Annotated[str | None, typer.Option("--from", help="Source language code/name.")] = None,
     target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
@@ -151,6 +156,13 @@ def translate(
     cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
     report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
     keep_intermediate: Annotated[bool, typer.Option("--keep-intermediate", help="Keep Argos and normalized intermediate files.")] = False,
+    install_argos_package: Annotated[
+        bool,
+        typer.Option(
+            "--install-argos-package",
+            help="Download and install the requested Argos language package. Without input, install and exit.",
+        ),
+    ] = False,
     output_format: Annotated[str | None, typer.Option("--output-format", help="Output format: srt or vtt.")] = None,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
 ):
@@ -161,14 +173,28 @@ def translate(
     selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
     selected_argos_device = argos_device or config.argos_device
     selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
-    selected_output_format = output_format or output_path.suffix.lstrip(".") or config.output_format
-    selected_report_path = report_path or output_path.with_suffix(output_path.suffix + ".report.json")
+    selected_output_format = output_format or (output_path.suffix.lstrip(".") if output_path else None) or config.output_format
+    selected_report_path = report_path or (output_path.with_suffix(output_path.suffix + ".report.json") if output_path else None)
     selected_keep_intermediate = keep_intermediate or config.keep_intermediate
     translation_config = _merge_translation_config(config.translation, prompt)
     started_at = time.perf_counter()
     timings: list[tuple[str, float]] = []
 
     try:
+        if install_argos_package and input_path is None:
+            _install_argos_package_for_cli(source, target)
+            return
+        if input_path is None:
+            raise SubtitleForgeError(
+                "Input subtitle path is required. To install an Argos package without translating, run: "
+                f"subtitle-forge translate --from {source} --to {target} --install-argos-package"
+            )
+        if not input_path.exists() or not input_path.is_file():
+            raise SubtitleForgeError(f"Input subtitle file was not found: {input_path}")
+        if output_path is None:
+            raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
+        if selected_report_path is None:
+            raise SubtitleForgeError("Validation report path could not be resolved.")
         if selected_argos_device not in VALID_ARGOS_DEVICES:
             expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
             raise SubtitleForgeError(f"Unsupported Argos device '{selected_argos_device}'. Expected one of: {expected}.")
@@ -189,6 +215,9 @@ def translate(
         cues = read_subtitles(input_path)
         _detail(f"{len(cues)} cues loaded")
         timings.append(("Read", time.perf_counter() - stage_started))
+
+        if install_argos_package:
+            _install_argos_package_for_cli(source, target)
 
         stage_started = time.perf_counter()
         _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
@@ -297,6 +326,15 @@ def _build_cleanup_provider(
     if normalized == "mock":
         return MockProvider(target_language=target_language)
     raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock.")
+
+
+def _install_argos_package_for_cli(source_language: str, target_language: str) -> None:
+    _stage("Argos package setup", f"Ensuring {source_language} -> {target_language} is installed")
+    installed_argos_package = install_argos_language_package(source_language, target_language, on_status=_detail)
+    if installed_argos_package:
+        _success(f"Installed Argos package {source_language} -> {target_language}.")
+    else:
+        _detail(f"Argos translation path already installed: {source_language} -> {target_language}")
 
 
 def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> TranslationConfig:

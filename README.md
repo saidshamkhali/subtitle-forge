@@ -16,7 +16,19 @@ The default workflow is:
 python -m pip install -e ".[dev]"
 ```
 
-Argos language packages must already be installed locally. Subtitle Forge does not download them automatically.
+ArgosTranslate is installed with Subtitle Forge. Install the Argos language package for each translation pair before the first run:
+
+```bash
+subtitle-forge translate --from en --to fa --install-argos-package
+```
+
+Argos packages are installed for a translation pair, such as `en -> fa`. After installing the pair once, translate normally:
+
+```bash
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt
+```
+
+If the package is missing, Subtitle Forge prints the setup command to run. You can also combine setup and translation in one command by adding `--install-argos-package` to a normal `translate` command.
 
 Check your setup:
 
@@ -83,6 +95,9 @@ Translate options:
 --cleanup-batch-size   Flagged cues per cleanup call.
 --report               Validation report path.
 --keep-intermediate    Write Argos and normalized intermediate subtitles.
+--install-argos-package
+                       Download and install the requested Argos language package.
+                       If no input file is provided, install the package and exit.
 --output-format        Output format: srt or vtt.
 --prompt               Additional cleanup prompt instructions.
 ```

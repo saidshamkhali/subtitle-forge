@@ -1,10 +1,20 @@
 from datetime import timedelta
 import logging
 import os
+from pathlib import Path
 from types import SimpleNamespace
 import sys
 
-from subtitle_forge.argos import _translate_segments_in_chunks, translate_cues_with_argos
+import argostranslate
+import pytest
+
+from subtitle_forge.argos import (
+    _translate_segments_in_chunks,
+    get_argos_translation,
+    install_argos_package,
+    translate_cues_with_argos,
+)
+from subtitle_forge.errors import ProviderError
 from subtitle_forge.models import SubtitleCue
 
 
@@ -88,6 +98,73 @@ def test_argos_pass_suppresses_known_stanza_package_warning(caplog, capfd):
     stderr = capfd.readouterr().err
     assert "expects mwt" not in stderr
     assert "GPU requested" not in stderr
+
+
+def test_install_argos_package_downloads_missing_translation(monkeypatch):
+    installed_pairs = set()
+    statuses = []
+
+    class FakeLanguage:
+        def __init__(self, code):
+            self.code = code
+
+        def get_translation(self, target):
+            if (self.code, target.code) in installed_pairs:
+                return FakeTranslator()
+            return None
+
+    class FakeAvailablePackage:
+        from_code = "xx"
+        to_code = "yy"
+        type = "translate"
+
+        def download(self):
+            return Path("xx_yy.argosmodel")
+
+    def get_installed_languages():
+        return [FakeLanguage("xx"), FakeLanguage("yy")]
+
+    def install_from_path(path):
+        assert path == Path("xx_yy.argosmodel")
+        installed_pairs.add(("xx", "yy"))
+
+    fake_translate = SimpleNamespace(get_installed_languages=get_installed_languages)
+    fake_package = SimpleNamespace(
+        update_package_index=lambda: None,
+        get_available_packages=lambda: [FakeAvailablePackage()],
+        install_from_path=install_from_path,
+    )
+    monkeypatch.setitem(sys.modules, "argostranslate.translate", fake_translate)
+    monkeypatch.setitem(sys.modules, "argostranslate.package", fake_package)
+
+    installed = install_argos_package("xx", "yy", on_status=statuses.append)
+
+    assert installed is True
+    assert installed_pairs == {("xx", "yy")}
+    assert statuses == [
+        "Refreshing Argos package index",
+        "Downloading Argos package xx -> yy",
+        "Installing Argos package from xx_yy.argosmodel",
+    ]
+
+
+def test_get_argos_translation_suggests_install_command_for_missing_path(monkeypatch):
+    class FakeLanguage:
+        def __init__(self, code):
+            self.code = code
+
+        def get_translation(self, target):
+            return None
+
+    fake_translate = SimpleNamespace(get_installed_languages=lambda: [FakeLanguage("en"), FakeLanguage("fa")])
+    monkeypatch.setitem(sys.modules, "argostranslate.translate", fake_translate)
+    monkeypatch.setattr(argostranslate, "translate", fake_translate, raising=False)
+
+    with pytest.raises(ProviderError) as exc_info:
+        get_argos_translation("en", "fa")
+
+    assert "Argos translation path is not installed: en -> fa" in str(exc_info.value)
+    assert "subtitle-forge translate --from en --to fa --install-argos-package" in str(exc_info.value)
 
 
 def test_argos_device_is_scoped_to_translation(monkeypatch):

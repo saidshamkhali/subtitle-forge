@@ -89,12 +89,12 @@ def doctor(
     """Check local setup for ArgosTranslate and the Codex cleanup provider."""
     config = _load_config_or_fail(config_path)
     try:
-        import argostranslate.translate
+        argos_translate = _load_argos_translate()
     except ImportError:
         typer.secho("Missing: ArgosTranslate Python package was not found.", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    installed_languages = argostranslate.translate.get_installed_languages()
+    installed_languages = argos_translate.get_installed_languages()
     installed_codes = sorted(language.code for language in installed_languages)
     typer.echo(f"ArgosTranslate: installed languages: {', '.join(installed_codes) or 'none'}")
     typer.echo(f"Argos device default: {config.argos_device}")
@@ -336,6 +336,12 @@ def _resolve_output_format(input_path: Path, output_path: Path) -> str:
     if output_suffix in {"srt", "vtt"}:
         return output_suffix
     return detect_format(input_path)
+
+
+def _load_argos_translate():
+    import argostranslate.translate
+
+    return argostranslate.translate
 
 
 def _load_config_or_fail(config_path: Path | None) -> AppConfig:

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from typer.testing import CliRunner
 
 from subtitle_forge.cli import app
@@ -46,6 +48,7 @@ cleanup_provider = "mock"
         encoding="utf-8",
     )
     monkeypatch.setattr("subtitle_forge.cli._cuda_status", lambda: "test cuda status")
+    monkeypatch.setattr("subtitle_forge.cli._load_argos_translate", _fake_argos_translate)
     monkeypatch.setattr("subtitle_forge.cli.resolve_executable", _raise_if_codex_resolution_runs)
 
     result = runner.invoke(app, ["doctor", "--config", str(config)])
@@ -412,6 +415,10 @@ def _raise_if_argos_translation_runs(*args, **kwargs):
 
 def _raise_if_argos_package_install_runs(*args, **kwargs):
     raise AssertionError("Argos package install should be opt-in")
+
+
+def _fake_argos_translate():
+    return SimpleNamespace(get_installed_languages=lambda: [])
 
 
 def _raise_if_codex_resolution_runs(*args, **kwargs):

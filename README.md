@@ -44,6 +44,27 @@ Basic translation:
 subtitle-forge translate input.en.srt --from en --to fa --out output.fa.srt
 ```
 
+VTT files are supported too:
+
+```bash
+subtitle-forge translate input.en.vtt --from en --to fa --out output.fa.vtt
+```
+
+You can also convert between subtitle formats while translating:
+
+```bash
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa.vtt
+subtitle-forge translate input.en.vtt --from en --to fa --out output.fa.srt
+```
+
+The output format is inferred from `--out`; use `.srt` or `.vtt`. Use `--output-format` only for extensionless or custom output names:
+
+```bash
+subtitle-forge translate input.en.srt --from en --to fa --out output.fa --output-format vtt
+```
+
+Subtitle Forge rejects conflicting output choices, such as `--out output.fa.srt --output-format vtt`.
+
 Use CUDA for the Argos first pass:
 
 ```bash
@@ -84,7 +105,8 @@ translate  Run the full translation pipeline.
 Translate options:
 
 ```text
---out, -o              Final output subtitle path. Required.
+input_path             Subtitle file to translate. Optional only when using --install-argos-package for setup.
+--out, -o              Final output subtitle path. Required for translation.
 --config, -c           Path to subtitle-forge.toml.
 --from                 Source language code, such as en.
 --to                   Target language code, such as fa.

@@ -83,6 +83,57 @@ def test_cli_translate_uses_output_extension_over_config_default(monkeypatch, tm
     assert output.read_text(encoding="utf-8").startswith("WEBVTT")
 
 
+def test_cli_translate_allows_srt_input_with_vtt_output(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.vtt"
+
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_bad_first_pass)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--cleanup-provider",
+            "mock",
+            "--out",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.read_text(encoding="utf-8").startswith("WEBVTT")
+
+
+def test_cli_translate_rejects_output_extension_format_mismatch(monkeypatch, tmp_path):
+    output = tmp_path / "movie.fa.srt"
+
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _raise_if_argos_translation_runs)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--out",
+            str(output),
+            "--output-format",
+            "vtt",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "conflicts with --output-format vtt" in result.stdout
+    assert "Traceback" not in result.stdout
+
+
 def test_cli_translate_skips_cleanup_progress_when_no_cues_flagged(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 

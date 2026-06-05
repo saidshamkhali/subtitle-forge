@@ -195,6 +195,7 @@ def translate(
             raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
         if selected_report_path is None:
             raise SubtitleForgeError("Validation report path could not be resolved.")
+        _validate_output_format_choice(output_path, output_format)
         if selected_argos_device not in VALID_ARGOS_DEVICES:
             expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
             raise SubtitleForgeError(f"Unsupported Argos device '{selected_argos_device}'. Expected one of: {expected}.")
@@ -335,6 +336,18 @@ def _install_argos_package_for_cli(source_language: str, target_language: str) -
         _success(f"Installed Argos package {source_language} -> {target_language}.")
     else:
         _detail(f"Argos translation path already installed: {source_language} -> {target_language}")
+
+
+def _validate_output_format_choice(output_path: Path, explicit_output_format: str | None) -> None:
+    if explicit_output_format is None:
+        return
+    suffix_format = output_path.suffix.lstrip(".").lower()
+    requested_format = explicit_output_format.lower()
+    if suffix_format in {"srt", "vtt"} and suffix_format != requested_format:
+        raise SubtitleForgeError(
+            f"Output path extension '.{suffix_format}' conflicts with --output-format {requested_format}. "
+            f"Use an output path ending in '.{requested_format}', or remove --output-format."
+        )
 
 
 def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> TranslationConfig:

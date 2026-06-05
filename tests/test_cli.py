@@ -188,6 +188,43 @@ def test_cli_translate_skips_cleanup_progress_when_no_cues_flagged(monkeypatch, 
     assert "Cleanup batches" not in result.stdout
 
 
+def test_cli_translate_no_keep_intermediate_overrides_config(monkeypatch, tmp_path):
+    config = tmp_path / "subtitle-forge.toml"
+    output = tmp_path / "movie.fa.srt"
+    config.write_text(
+        """
+[defaults]
+keep_intermediate = true
+cleanup_provider = "mock"
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_clean_first_pass)
+
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "examples/movie.en.srt",
+            "--config",
+            str(config),
+            "--from",
+            "en",
+            "--to",
+            "fa",
+            "--out",
+            str(output),
+            "--no-keep-intermediate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.exists()
+    assert not output.with_name("movie.fa.argos.srt").exists()
+    assert not output.with_name("movie.fa.normalized.srt").exists()
+
+
 def test_cli_translate_does_not_build_cleanup_provider_when_no_cues_flagged(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 

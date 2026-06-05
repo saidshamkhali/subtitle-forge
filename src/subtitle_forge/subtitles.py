@@ -24,12 +24,18 @@ def read_subtitles(path: Path, input_format: str | None = None) -> list[Subtitle
     fmt = detect_format(path, input_format)
     try:
         if fmt == "srt":
-            return _read_srt(path)
-        if fmt == "vtt":
-            return _read_vtt(path)
+            cues = _read_srt(path)
+        elif fmt == "vtt":
+            cues = _read_vtt(path)
+        else:
+            raise SubtitleParseError(f"Unsupported subtitle format '{fmt}'.")
+    except SubtitleParseError:
+        raise
     except Exception as exc:
         raise SubtitleParseError(f"Could not parse {path}: {exc}") from exc
-    raise SubtitleParseError(f"Unsupported subtitle format '{fmt}'.")
+
+    _reject_duplicate_cue_ids(cues)
+    return cues
 
 
 def write_subtitles(cues: list[SubtitleCue], path: Path, output_format: str | None = None) -> None:
@@ -66,6 +72,19 @@ def _read_vtt(path: Path) -> list[SubtitleCue]:
             )
         )
     return cues
+
+
+def _reject_duplicate_cue_ids(cues: list[SubtitleCue]) -> None:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for cue in cues:
+        if cue.id in seen and cue.id not in duplicates:
+            duplicates.append(cue.id)
+        seen.add(cue.id)
+
+    if duplicates:
+        duplicate_text = ", ".join(repr(cue_id) for cue_id in duplicates)
+        raise SubtitleParseError(f"Duplicate subtitle cue id(s) found: {duplicate_text}. Cue ids must be unique.")
 
 
 def _format_srt(cues: list[SubtitleCue]) -> str:

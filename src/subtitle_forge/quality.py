@@ -117,6 +117,9 @@ def validate_translation(
             tag_mismatch_count += 1
             issues.append(CueIssue(cue.id, "tag_mismatch", "Output formatting tags differ from source tags."))
 
+        if source and _has_dialogue(source.text) and not _has_dialogue(cue.text):
+            issues.append(CueIssue(cue.id, "empty_translation", "Output cue is empty but source cue has dialogue."))
+
         if source and _length_ratio_is_suspicious(source.text, cue.text):
             issues.append(CueIssue(cue.id, "length_ratio", "Output cue length is suspicious compared with source."))
 
@@ -209,6 +212,10 @@ def _length_ratio_is_suspicious(source_text: str, output_text: str) -> bool:
     if source_len < 8 or output_len == 0:
         return False
     return output_len > source_len * 4 or output_len < source_len * 0.15
+
+
+def _has_dialogue(text: str) -> bool:
+    return bool(strip_bidi_and_invisible(strip_tags(text)).strip())
 
 
 def _tags(text: str) -> list[str]:

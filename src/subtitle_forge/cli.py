@@ -159,7 +159,13 @@ def translate(
     argos_device: Annotated[str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")] = None,
     cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
     report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
-    keep_intermediate: Annotated[bool, typer.Option("--keep-intermediate", help="Keep Argos and normalized intermediate files.")] = False,
+    keep_intermediate: Annotated[
+        bool | None,
+        typer.Option(
+            "--keep-intermediate/--no-keep-intermediate",
+            help="Keep Argos and normalized intermediate files.",
+        ),
+    ] = None,
     install_argos_package: Annotated[
         bool,
         typer.Option(
@@ -177,7 +183,7 @@ def translate(
     selected_argos_device = argos_device or config.argos_device
     selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
     selected_report_path = report_path or (output_path.with_suffix(output_path.suffix + ".report.json") if output_path else None)
-    selected_keep_intermediate = keep_intermediate or config.keep_intermediate
+    selected_keep_intermediate = config.keep_intermediate if keep_intermediate is None else keep_intermediate
     translation_config = _merge_translation_config(config.translation, prompt)
     started_at = time.perf_counter()
     timings: list[tuple[str, float]] = []

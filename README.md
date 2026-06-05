@@ -120,7 +120,8 @@ input_path             Subtitle file to translate. Optional only when using --in
 --argos-device         Argos first-pass device: cpu, cuda, or auto.
 --cleanup-batch-size   Flagged cues per cleanup call.
 --report               Validation report path.
---keep-intermediate    Write Argos and normalized intermediate subtitles.
+--keep-intermediate / --no-keep-intermediate
+                       Write or skip Argos and normalized intermediate subtitles.
 --install-argos-package
                        Download and install the requested Argos language package.
                        If no input file is provided, install the package and exit.

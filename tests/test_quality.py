@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from subtitle_forge.bidi import POP_DIRECTIONAL_FORMATTING, RTL_EMBEDDING
 from subtitle_forge.models import SubtitleCue
-from subtitle_forge.quality import validate_translation
+from subtitle_forge.quality import validate_translation, validation_passed
 
 
 def test_validator_flags_disallowed_latin_and_missing_persian():
@@ -71,3 +71,23 @@ def test_validator_flags_mojibake_and_tag_mismatch():
 
     assert report.mojibake_count == 1
     assert report.tag_mismatch_count == 1
+
+
+def test_validator_flags_empty_translation_for_nonempty_source():
+    source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")]
+    output = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="")]
+
+    report = validate_translation(source, output, [])
+
+    assert "1" in report.suspicious_cue_ids
+    assert any(issue.code == "empty_translation" for issue in report.issues)
+    assert not validation_passed(report)
+
+
+def test_validator_allows_empty_translation_for_empty_source():
+    source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="")]
+    output = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="")]
+
+    report = validate_translation(source, output, [])
+
+    assert report.suspicious_cue_ids == []

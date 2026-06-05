@@ -29,7 +29,7 @@ def test_cli_providers():
     assert "mock" in result.stdout
 
 
-def test_cli_translate_with_hybrid_mock(monkeypatch, tmp_path):
+def test_cli_translate_with_mock_cleanup(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 
     monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _fake_argos_bad_first_pass)

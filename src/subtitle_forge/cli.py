@@ -74,7 +74,7 @@ def providers(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
 ):
     """List cleanup providers used after Argos validation."""
-    config = load_config(config_path)
+    config = _load_config_or_fail(config_path)
     typer.echo("Translation pipeline: ArgosTranslate first pass + deterministic normalization + flagged-cue cleanup")
     typer.echo(f"Cleanup provider: {config.cleanup_provider}")
     typer.echo("Available cleanup providers:")
@@ -87,7 +87,7 @@ def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
 ):
     """Check local setup for ArgosTranslate and the Codex cleanup provider."""
-    config = load_config(config_path)
+    config = _load_config_or_fail(config_path)
     try:
         import argostranslate.translate
     except ImportError:
@@ -167,7 +167,7 @@ def translate(
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
 ):
     """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
-    config = load_config(config_path)
+    config = _load_config_or_fail(config_path)
     source = source_language or config.source_language
     target = target_language or config.target_language
     selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
@@ -327,6 +327,13 @@ def _build_cleanup_provider(
     if normalized == "mock":
         return MockProvider(target_language=target_language)
     raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock.")
+
+
+def _load_config_or_fail(config_path: Path | None) -> AppConfig:
+    try:
+        return load_config(config_path)
+    except SubtitleForgeError as exc:
+        _fail(exc)
 
 
 def _install_argos_package_for_cli(source_language: str, target_language: str) -> None:

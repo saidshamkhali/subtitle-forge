@@ -11,6 +11,7 @@ from subtitle_forge.normalization import DEFAULT_ALLOWED_LATIN_NAMES
 CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
 VALID_ARGOS_DEVICES = {"auto", "cpu", "cuda"}
 VALID_CLEANUP_PROVIDERS = {"codex", "mock"}
+DEFAULT_CLEANUP_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ class AppConfig:
     source_language: str = "en"
     target_language: str = "fa"
     argos_device: str = "cpu"
-    cleanup_batch_size: int = 25
+    cleanup_batch_size: int = DEFAULT_CLEANUP_BATCH_SIZE
     cleanup_provider: str = "codex"
     keep_intermediate: bool = False
     codex: CodexProviderConfig = field(default_factory=CodexProviderConfig)
@@ -65,7 +66,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         source_language=_string(defaults, "source_language", "en", config_path),
         target_language=_string(defaults, "target_language", "fa", config_path),
         argos_device=_choice(defaults, "argos_device", "cpu", VALID_ARGOS_DEVICES, config_path),
-        cleanup_batch_size=_positive_int(defaults, "cleanup_batch_size", 25, config_path),
+        cleanup_batch_size=_positive_int(defaults, "cleanup_batch_size", DEFAULT_CLEANUP_BATCH_SIZE, config_path),
         cleanup_provider=_choice(defaults, "cleanup_provider", "codex", VALID_CLEANUP_PROVIDERS, config_path),
         keep_intermediate=_bool(defaults, "keep_intermediate", False, config_path),
         codex=CodexProviderConfig(

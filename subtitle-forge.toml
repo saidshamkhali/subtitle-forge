@@ -3,7 +3,7 @@ source_language = "en"
 target_language = "fa"
 argos_device = "cpu"
 cleanup_provider = "codex"
-cleanup_batch_size = 25
+cleanup_batch_size = 100
 keep_intermediate = false
 
 [providers.codex]

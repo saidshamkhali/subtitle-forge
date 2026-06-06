@@ -84,6 +84,7 @@ def test_cli_translate_with_mock_cleanup(monkeypatch, tmp_path):
     assert "سلام." in output.read_text(encoding="utf-8")
     assert "1/6 Reading subtitles" in result.stdout
     assert "6/6 Final normalization, validation, and write" in result.stdout
+    assert "Top issue types:" in result.stdout
     assert "No suspicious cues flagged; skipping AI cleanup." not in result.stdout
 
 
@@ -436,6 +437,7 @@ def _fake_cleanup_leaves_cues_unchanged(
     allowed_latin_names,
     batch_size,
     on_batch=None,
+    cleanup_cache=None,
 ):
     if on_batch:
         on_batch(1, flagged_ids)

@@ -78,13 +78,13 @@ def test_argos_pass_reuses_duplicate_translation_segments():
     assert translator.calls == ["Hello."]
 
 
-def test_cuda_segment_batch_falls_back_when_line_count_mismatches():
+def test_cuda_segment_batch_translates_segments_individually():
     translator = BadBatchTranslator()
 
     translated = _translate_segments_in_chunks(translator, ["one", "two"], 10)
 
     assert translated == {"one": "ONE", "two": "TWO"}
-    assert translator.calls == ["one\ntwo", "one", "two"]
+    assert translator.calls == ["one", "two"]
 
 
 def test_argos_pass_suppresses_known_stanza_package_warning(caplog, capfd):

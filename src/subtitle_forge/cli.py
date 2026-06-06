@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import subprocess
@@ -25,9 +28,10 @@ from subtitle_forge.config import (
 )
 from subtitle_forge.errors import SubtitleForgeError
 from subtitle_forge.executables import resolve_executable
+from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import normalize_cues_for_target
 from subtitle_forge.providers import CodexExecProvider, MockProvider, TranslationProvider
-from subtitle_forge.quality import validate_translation, validation_passed
+from subtitle_forge.quality import ValidationReport, validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
 
 
@@ -177,148 +181,93 @@ def translate(
 ):
     """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
     config = _load_config_or_fail(config_path)
-    source = source_language or config.source_language
-    target = target_language or config.target_language
-    selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
-    selected_argos_device = argos_device or config.argos_device
-    selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
-    selected_report_path = report_path or (output_path.with_suffix(output_path.suffix + ".report.json") if output_path else None)
-    selected_keep_intermediate = config.keep_intermediate if keep_intermediate is None else keep_intermediate
-    translation_config = _merge_translation_config(config.translation, prompt)
+    settings = _resolve_translate_settings(
+        config=config,
+        input_path=input_path,
+        output_path=output_path,
+        source_language=source_language,
+        target_language=target_language,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        cleanup_provider_name=cleanup_provider_name,
+        argos_device=argos_device,
+        cleanup_batch_size=cleanup_batch_size,
+        report_path=report_path,
+        keep_intermediate=keep_intermediate,
+        prompt=prompt,
+    )
     started_at = time.perf_counter()
     timings: list[tuple[str, float]] = []
 
     try:
-        if install_argos_package and input_path is None:
-            _install_argos_package_for_cli(source, target)
+        if install_argos_package and settings.input_path is None:
+            _install_argos_package_for_cli(settings.source, settings.target)
             return
-        if input_path is None:
-            raise SubtitleForgeError(
-                "Input subtitle path is required. To install an Argos package without translating, run: "
-                f"subtitle-forge translate --from {source} --to {target} --install-argos-package"
-            )
-        if not input_path.exists() or not input_path.is_file():
-            raise SubtitleForgeError(f"Input subtitle file was not found: {input_path}")
-        if output_path is None:
-            raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
-        selected_output_format = _resolve_output_format(input_path, output_path)
-        if selected_report_path is None:
-            raise SubtitleForgeError("Validation report path could not be resolved.")
-        if selected_argos_device not in VALID_ARGOS_DEVICES:
-            expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
-            raise SubtitleForgeError(f"Unsupported Argos device '{selected_argos_device}'. Expected one of: {expected}.")
-        if selected_argos_device == "cuda":
-            cuda_status = _cuda_status()
-            if "CUDA runtime looks loadable" not in cuda_status:
-                raise SubtitleForgeError(
-                    "Argos GPU mode requires the CUDA 12.x runtime libraries. "
-                    f"Current CUDA status: {cuda_status}. "
-                    "Install CUDA Toolkit 12.x and make sure its 'bin' directory is on PATH, "
-                    "or rerun with '--argos-device cpu'."
-                )
+        settings = _require_translate_settings(settings)
+        _validate_translate_inputs(settings)
 
-        _print_translate_header(input_path, output_path, source, target, selected_cleanup_provider, selected_argos_device)
+        _print_translate_header(
+            settings.input_path,
+            settings.output_path,
+            settings.source,
+            settings.target,
+            settings.cleanup_provider,
+            settings.argos_device,
+        )
 
-        stage_started = time.perf_counter()
-        _stage("1/6 Reading subtitles", f"Source: {input_path}")
-        cues = read_subtitles(input_path)
-        _detail(f"{len(cues)} cues loaded")
-        timings.append(("Read", time.perf_counter() - stage_started))
+        cues, read_seconds = _stage_read_subtitles(settings.input_path)
+        timings.append(("Read", read_seconds))
 
         if install_argos_package:
-            _install_argos_package_for_cli(source, target)
+            _install_argos_package_for_cli(settings.source, settings.target)
 
-        stage_started = time.perf_counter()
-        _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
-        with typer.progressbar(length=len(cues), label="Translating cues") as progress:
-            argos_cues = translate_cues_with_argos(
-                cues,
-                source,
-                target,
-                device_type=selected_argos_device,
-                on_cue=lambda _index, _cue: progress.update(1),
-            )
-        timings.append(("Argos", time.perf_counter() - stage_started))
+        argos_cues, argos_seconds = _stage_argos_translation(cues, settings)
+        timings.append(("Argos", argos_seconds))
 
-        stage_started = time.perf_counter()
-        _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
-        normalized_cues = normalize_cues_for_target(argos_cues, target, config.allowed_latin_names)
-        intermediate_paths = _write_intermediate_files(
-            output_path,
-            selected_output_format,
-            argos_cues,
-            normalized_cues,
-            selected_keep_intermediate,
+        normalized_cues, intermediate_paths, normalize_seconds = _stage_normalize(
+            argos_cues, settings
         )
-        if intermediate_paths:
-            _detail(f"Intermediate files kept: {len(intermediate_paths)}")
-        timings.append(("Normalize", time.perf_counter() - stage_started))
+        timings.append(("Normalize", normalize_seconds))
 
-        stage_started = time.perf_counter()
-        _stage("4/6 Validating and flagging suspicious cues", "Checking structure, mojibake, tags, RTL marks, and Latin text")
-        initial_report = validate_translation(cues, normalized_cues, config.allowed_latin_names)
-        flagged_ids = initial_report.suspicious_cue_ids
-        _detail(f"Flagged suspicious cues: {len(flagged_ids)}")
-        timings.append(("Validate", time.perf_counter() - stage_started))
+        initial_report, validate_seconds = _stage_initial_validation(cues, normalized_cues, settings)
+        timings.append(("Validate", validate_seconds))
 
-        stage_started = time.perf_counter()
-        batch_count = math.ceil(len(flagged_ids) / selected_cleanup_batch_size) if flagged_ids else 0
-        _stage("5/6 AI cleanup", f"{len(flagged_ids)} flagged cues in {batch_count} batches")
+        cleaned_cues, cleanup_seconds = _stage_cleanup(cues, normalized_cues, initial_report, settings)
+        timings.append(("Cleanup", cleanup_seconds))
 
-        def on_cleanup_batch(index: int, batch_ids: list[str]) -> None:
-            preview = ", ".join(batch_ids[:8])
-            suffix = "..." if len(batch_ids) > 8 else ""
-            _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
+        final_cues, final_report, finalize_seconds = _stage_finalize(cues, cleaned_cues, settings)
+        timings.append(("Finalize", finalize_seconds))
 
-        if batch_count:
-            cleanup_provider = _build_cleanup_provider(selected_cleanup_provider, config, target, model, reasoning_effort)
-            with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
-                cleaned_cues = cleanup_flagged_cues(
-                    source_cues=cues,
-                    current_cues=normalized_cues,
-                    flagged_ids=flagged_ids,
-                    issues=initial_report.issues,
-                    provider=cleanup_provider,
-                    source_language=source,
-                    target_language=target,
-                    translation_config=translation_config,
-                    allowed_latin_names=config.allowed_latin_names,
-                    batch_size=selected_cleanup_batch_size,
-                    on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
-                )
-        else:
-            _success("No suspicious cues flagged; skipping AI cleanup.")
-            cleaned_cues = normalized_cues
-        timings.append(("Cleanup", time.perf_counter() - stage_started))
-
-        stage_started = time.perf_counter()
-        _stage("6/6 Final normalization, validation, and write", f"Output: {output_path}")
-        final_cues = normalize_cues_for_target(cleaned_cues, target, config.allowed_latin_names)
-        final_report = validate_translation(cues, final_cues, config.allowed_latin_names)
-        write_subtitles(final_cues, output_path, selected_output_format)
         _write_report(
-            report_path=selected_report_path,
-            input_path=input_path,
-            output_path=output_path,
-            source_language=source,
-            target_language=target,
+            report_path=settings.report_path,
+            input_path=settings.input_path,
+            output_path=settings.output_path,
+            source_language=settings.source,
+            target_language=settings.target,
             initial_report=initial_report,
             final_report=final_report,
             intermediate_paths=intermediate_paths,
         )
-        timings.append(("Finalize", time.perf_counter() - stage_started))
         elapsed_seconds = time.perf_counter() - started_at
-        _print_summary(output_path, selected_report_path, len(cues), initial_report, final_report, elapsed_seconds, timings)
+        _print_summary(
+            settings.output_path,
+            settings.report_path,
+            len(cues),
+            initial_report,
+            final_report,
+            elapsed_seconds,
+            timings,
+        )
         if not validation_passed(final_report):
             _warning(
                 f"Final validation failed with {len(final_report.suspicious_cue_ids)} suspicious cues remaining. "
-                f"Review the report: {selected_report_path}"
+                f"Review the report: {settings.report_path}"
             )
             raise typer.Exit(1)
     except SubtitleForgeError as exc:
         _fail(exc)
 
-    _success(f"Translated {len(final_cues)} cues to {output_path}")
+    _success(f"Translated {len(final_cues)} cues to {settings.output_path}")
 
 
 def _build_cleanup_provider(
@@ -379,11 +328,257 @@ def _merge_translation_config(config: TranslationConfig, prompt: str | None) -> 
     )
 
 
+@dataclass(frozen=True)
+class _TranslateSettings:
+    input_path: Path | None
+    output_path: Path | None
+    report_path: Path | None
+    output_format: str | None
+    source: str
+    target: str
+    cleanup_provider: str
+    argos_device: str
+    cleanup_batch_size: int
+    keep_intermediate: bool
+    translation_config: TranslationConfig
+    model: str | None
+    reasoning_effort: str | None
+    config: AppConfig
+
+
+def _resolve_translate_settings(
+    config: AppConfig,
+    input_path: Path | None,
+    output_path: Path | None,
+    source_language: str | None,
+    target_language: str | None,
+    model: str | None,
+    reasoning_effort: str | None,
+    cleanup_provider_name: str | None,
+    argos_device: str | None,
+    cleanup_batch_size: int | None,
+    report_path: Path | None,
+    keep_intermediate: bool | None,
+    prompt: str | None,
+) -> _TranslateSettings:
+    source = source_language or config.source_language
+    target = target_language or config.target_language
+    selected_cleanup_provider = cleanup_provider_name or config.cleanup_provider
+    selected_argos_device = argos_device or config.argos_device
+    selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
+    selected_keep_intermediate = config.keep_intermediate if keep_intermediate is None else keep_intermediate
+    translation_config = _merge_translation_config(config.translation, prompt)
+    resolved_output_format = (
+        _resolve_output_format(input_path, output_path)
+        if input_path is not None and output_path is not None
+        else None
+    )
+    resolved_report = (
+        report_path
+        or (output_path.with_suffix(output_path.suffix + ".report.json") if output_path is not None else None)
+    )
+    return _TranslateSettings(
+        input_path=input_path,
+        output_path=output_path,
+        report_path=resolved_report,
+        output_format=resolved_output_format,
+        source=source,
+        target=target,
+        cleanup_provider=selected_cleanup_provider,
+        argos_device=selected_argos_device,
+        cleanup_batch_size=selected_cleanup_batch_size,
+        keep_intermediate=selected_keep_intermediate,
+        translation_config=translation_config,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        config=config,
+    )
+
+
+def _require_translate_settings(settings: _TranslateSettings) -> _TranslateSettings:
+    if settings.input_path is None:
+        raise SubtitleForgeError(
+            "Input subtitle path is required. To install an Argos package without translating, run: "
+            f"subtitle-forge translate --from {settings.source} --to {settings.target} --install-argos-package"
+        )
+    if settings.output_path is None:
+        raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
+    if settings.report_path is None or settings.output_format is None:
+        raise SubtitleForgeError("Validation report path could not be resolved.")
+    return settings
+
+
+def _validate_translate_inputs(settings: _TranslateSettings) -> None:
+    if not settings.input_path.exists() or not settings.input_path.is_file():
+        raise SubtitleForgeError(f"Input subtitle file was not found: {settings.input_path}")
+    if settings.argos_device not in VALID_ARGOS_DEVICES:
+        expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
+        raise SubtitleForgeError(f"Unsupported Argos device '{settings.argos_device}'. Expected one of: {expected}.")
+    if settings.argos_device == "cuda":
+        cuda_status = _cuda_status()
+        if "CUDA runtime looks loadable" not in cuda_status:
+            raise SubtitleForgeError(
+                "Argos GPU mode requires the CUDA 12.x runtime libraries. "
+                f"Current CUDA status: {cuda_status}. "
+                "Install CUDA Toolkit 12.x and make sure its 'bin' directory is on PATH, "
+                "or rerun with '--argos-device cpu'."
+            )
+
+
+def _stage_read_subtitles(input_path: Path) -> tuple[list[SubtitleCue], float]:
+    started = time.perf_counter()
+    _stage("1/6 Reading subtitles", f"Source: {input_path}")
+    cues = read_subtitles(input_path)
+    _detail(f"{len(cues)} cues loaded")
+    return cues, time.perf_counter() - started
+
+
+def _stage_argos_translation(
+    cues: list[SubtitleCue],
+    settings: _TranslateSettings,
+) -> tuple[list[SubtitleCue], float]:
+    started = time.perf_counter()
+    _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
+    with typer.progressbar(length=len(cues), label="Translating cues") as progress:
+        argos_cues = translate_cues_with_argos(
+            cues,
+            settings.source,
+            settings.target,
+            device_type=settings.argos_device,
+            on_cue=lambda _index, _cue: progress.update(1),
+        )
+    return argos_cues, time.perf_counter() - started
+
+
+def _stage_normalize(
+    argos_cues: list[SubtitleCue],
+    settings: _TranslateSettings,
+) -> tuple[list[SubtitleCue], dict[str, str], float]:
+    started = time.perf_counter()
+    _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
+    normalized_cues = normalize_cues_for_target(argos_cues, settings.target, settings.config.allowed_latin_names)
+    intermediate_paths = _write_intermediate_files(
+        settings.output_path,
+        settings.output_format,
+        argos_cues,
+        normalized_cues,
+        settings.keep_intermediate,
+    )
+    if intermediate_paths:
+        _detail(f"Intermediate files kept: {len(intermediate_paths)}")
+    return normalized_cues, intermediate_paths, time.perf_counter() - started
+
+
+def _stage_initial_validation(
+    cues: list[SubtitleCue],
+    normalized_cues: list[SubtitleCue],
+    settings: _TranslateSettings,
+) -> tuple[ValidationReport, float]:
+    started = time.perf_counter()
+    _stage("4/6 Validating and flagging suspicious cues", "Checking structure, mojibake, tags, RTL marks, and Latin text")
+    report = validate_translation(cues, normalized_cues, settings.config.allowed_latin_names)
+    _detail(f"Flagged suspicious cues: {len(report.suspicious_cue_ids)}")
+    issue_summary = _issue_summary(report)
+    if issue_summary:
+        _detail(f"Top issue types: {issue_summary}")
+    return report, time.perf_counter() - started
+
+
+def _stage_cleanup(
+    cues: list[SubtitleCue],
+    normalized_cues: list[SubtitleCue],
+    initial_report: ValidationReport,
+    settings: _TranslateSettings,
+) -> tuple[list[SubtitleCue], float]:
+    started = time.perf_counter()
+    flagged_ids = initial_report.suspicious_cue_ids
+    batch_count = math.ceil(len(flagged_ids) / settings.cleanup_batch_size) if flagged_ids else 0
+    _stage("5/6 AI cleanup", f"{len(flagged_ids)} flagged cues in {batch_count} batches")
+
+    if not batch_count:
+        _success("No suspicious cues flagged; skipping AI cleanup.")
+        return normalized_cues, time.perf_counter() - started
+
+    provider = _build_cleanup_provider(
+        settings.cleanup_provider,
+        settings.config,
+        settings.target,
+        settings.model,
+        settings.reasoning_effort,
+    )
+    cache_path = _cleanup_cache_path(settings)
+    cleanup_cache = _load_cleanup_cache(cache_path)
+    if cleanup_cache:
+        _detail(f"Cleanup cache entries: {len(cleanup_cache)}")
+
+    def on_cleanup_batch(index: int, batch_ids: list[str]) -> None:
+        preview = ", ".join(batch_ids[:8])
+        suffix = "..." if len(batch_ids) > 8 else ""
+        _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
+
+    with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
+        cleaned_cues = cleanup_flagged_cues(
+            source_cues=cues,
+            current_cues=normalized_cues,
+            flagged_ids=flagged_ids,
+            issues=initial_report.issues,
+            provider=provider,
+            source_language=settings.source,
+            target_language=settings.target,
+            translation_config=settings.translation_config,
+            allowed_latin_names=settings.config.allowed_latin_names,
+            batch_size=settings.cleanup_batch_size,
+            on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
+            cleanup_cache=cleanup_cache,
+        )
+    _write_cleanup_cache(cache_path, cleanup_cache)
+    return cleaned_cues, time.perf_counter() - started
+
+
+def _stage_finalize(
+    cues: list[SubtitleCue],
+    cleaned_cues: list[SubtitleCue],
+    settings: _TranslateSettings,
+) -> tuple[list[SubtitleCue], ValidationReport, float]:
+    started = time.perf_counter()
+    _stage("6/6 Final normalization, validation, and write", f"Output: {settings.output_path}")
+    final_cues = normalize_cues_for_target(cleaned_cues, settings.target, settings.config.allowed_latin_names)
+    final_report = validate_translation(cues, final_cues, settings.config.allowed_latin_names)
+    write_subtitles(final_cues, settings.output_path, settings.output_format)
+    return final_cues, final_report, time.perf_counter() - started
+
+
+def _issue_summary(report: ValidationReport) -> str:
+    counts = Counter(issue.code for issue in report.issues if issue.code)
+    return ", ".join(f"{code}={count}" for code, count in counts.most_common(5))
+
+
+def _cleanup_cache_path(settings: _TranslateSettings) -> Path:
+    return settings.output_path.with_suffix(settings.output_path.suffix + ".cleanup-cache.json")
+
+
+def _load_cleanup_cache(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, str)}
+
+
+def _write_cleanup_cache(path: Path, cleanup_cache: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cleanup_cache, ensure_ascii=False, indent=2), encoding="utf-8", newline="")
+
+
 def _write_intermediate_files(
     output_path: Path,
     output_format: str,
-    argos_cues,
-    normalized_cues,
+    argos_cues: list[SubtitleCue],
+    normalized_cues: list[SubtitleCue],
     keep_intermediate: bool,
 ) -> dict[str, str]:
     if not keep_intermediate:
@@ -401,12 +596,10 @@ def _write_report(
     output_path: Path,
     source_language: str,
     target_language: str,
-    initial_report,
-    final_report,
+    initial_report: ValidationReport,
+    final_report: ValidationReport,
     intermediate_paths: dict[str, str],
 ) -> None:
-    import json
-
     report_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "input": str(input_path),
@@ -467,8 +660,8 @@ def _print_summary(
     output_path: Path,
     report_path: Path,
     cue_count: int,
-    initial_report,
-    final_report,
+    initial_report: ValidationReport,
+    final_report: ValidationReport,
     elapsed_seconds: float,
     timings: list[tuple[str, float]],
 ) -> None:

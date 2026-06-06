@@ -11,6 +11,14 @@ PERSIAN_RE = re.compile(r"[\u0600-\u06ff]")
 TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
 ZWNJ = "\u200c"
 
+_ALLOWED_LATIN_NAME_PATTERNS: dict[str, re.Pattern] = {}
+
+
+def _get_latin_name_pattern(name: str) -> re.Pattern:
+    if name not in _ALLOWED_LATIN_NAME_PATTERNS:
+        _ALLOWED_LATIN_NAME_PATTERNS[name] = re.compile(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])")
+    return _ALLOWED_LATIN_NAME_PATTERNS[name]
+
 DEFAULT_ALLOWED_LATIN_NAMES = [
     "City Hunter",
     "Kaori",
@@ -54,7 +62,7 @@ def strip_tags(text: str) -> str:
 def strip_allowed_latin_names(text: str, allowed_latin_names: list[str]) -> str:
     stripped = text
     for name in sorted(allowed_latin_names, key=len, reverse=True):
-        stripped = re.sub(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", "", stripped)
+        stripped = _get_latin_name_pattern(name).sub("", stripped)
     return stripped
 
 
@@ -83,8 +91,7 @@ def strip_outer_rtl(line: str) -> str:
 def _wrap_allowed_latin_names(text: str, allowed_latin_names: list[str]) -> str:
     stripped = strip_bidi_and_invisible(text)
     for name in sorted(allowed_latin_names, key=len, reverse=True):
-        pattern = re.compile(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])")
-        stripped = pattern.sub(f"{LTR_EMBEDDING}{name}{POP_DIRECTIONAL_FORMATTING}", stripped)
+        stripped = _get_latin_name_pattern(name).sub(f"{LTR_EMBEDDING}{name}{POP_DIRECTIONAL_FORMATTING}", stripped)
     return stripped
 
 

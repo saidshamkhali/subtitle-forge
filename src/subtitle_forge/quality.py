@@ -18,6 +18,7 @@ from subtitle_forge.normalization import (
 
 LATIN_RE = re.compile(r"[A-Za-z]")
 MOJIBAKE_TOKENS = ("Ã", "Â", "â€", "Ø", "Ù", "Ú", "Û")
+MOJIBAKE_RE = re.compile("|".join(map(re.escape, MOJIBAKE_TOKENS)))
 
 
 @dataclass(frozen=True)
@@ -136,10 +137,9 @@ def validate_translation(
             if _line_has_repeated_junk(line):
                 issues.append(CueIssue(cue.id, "repeated_junk", "Dialogue line contains suspicious repeated tokens.", line))
 
-    for token in MOJIBAKE_TOKENS:
-        for cue in output_cues:
-            if token in cue.text:
-                issues.append(CueIssue(cue.id, "mojibake", f"Dialogue contains mojibake token {token!r}."))
+    for cue in output_cues:
+        for match in MOJIBAKE_RE.finditer(cue.text):
+            issues.append(CueIssue(cue.id, "mojibake", f"Dialogue contains mojibake token {match.group()!r}."))
 
     suspicious_ids = sorted({issue.cue_id for issue in issues if issue.cue_id}, key=_cue_sort_key)
     return ValidationReport(
@@ -149,7 +149,7 @@ def validate_translation(
         timestamps_match=timestamps_match,
         contains_persian_text=bool(PERSIAN_RE.search(output_text)),
         replacement_character_count=output_text.count("\ufffd"),
-        mojibake_count=sum(output_text.count(token) for token in MOJIBAKE_TOKENS),
+        mojibake_count=len(MOJIBAKE_RE.findall(output_text)),
         disallowed_latin_dialogue_line_count=disallowed_latin_count,
         unwrapped_dialogue_line_count=unwrapped_count,
         tag_mismatch_count=tag_mismatch_count,

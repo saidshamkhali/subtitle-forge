@@ -8,3 +8,7 @@ dist/
 build/
 *.egg-info/
 PLAN.md
+examples/*
+!examples/movie.en.srt
+!examples/movie.en.vtt
+!examples/movie.es.srt

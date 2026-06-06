@@ -196,14 +196,18 @@ def _translate_text_preserving_tags(text: str, translator: TextTranslator, cache
     return "\n".join(_translate_line_preserving_tags(line, translator, cache) for line in lines)
 
 
-def _translate_line_preserving_tags(line: str, translator: TextTranslator, cache: dict[str, str]) -> str:
+def _process_line_preserving_tags(line: str, process_fn: Callable[[str], str]) -> str:
     parts = TAG_RE.split(line)
     tags = TAG_RE.findall(line)
-    translated_parts = [_translate_plain_part(part, translator, cache) for part in parts]
-    translated = translated_parts[0]
-    for tag, part in zip(tags, translated_parts[1:]):
-        translated += tag + part
-    return translated.replace("\r", " ").replace("\n", " ").strip()
+    processed_parts = [process_fn(part) for part in parts]
+    result = processed_parts[0]
+    for tag, part in zip(tags, processed_parts[1:]):
+        result += tag + part
+    return result.replace("\r", " ").replace("\n", " ").strip()
+
+
+def _translate_line_preserving_tags(line: str, translator: TextTranslator, cache: dict[str, str]) -> str:
+    return _process_line_preserving_tags(line, lambda part: _translate_plain_part(part, translator, cache))
 
 
 def _translate_plain_part(text: str, translator: TextTranslator, cache: dict[str, str]) -> str:
@@ -260,11 +264,6 @@ def _translate_segments_in_chunks(
     translated: dict[str, str] = {}
     for index in range(0, len(segments), chunk_size):
         chunk = segments[index : index + chunk_size]
-        output = translator.translate("\n".join(chunk)).strip()
-        lines = output.splitlines()
-        if len(lines) == len(chunk):
-            translated.update({source: target.strip() for source, target in zip(chunk, lines)})
-            continue
         for source in chunk:
             translated[source] = translator.translate(source).strip()
     return translated
@@ -336,13 +335,7 @@ def _reconstruct_text_from_segments(text: str, translations: dict[str, str]) -> 
 
 
 def _reconstruct_line_from_segments(line: str, translations: dict[str, str]) -> str:
-    parts = TAG_RE.split(line)
-    tags = TAG_RE.findall(line)
-    translated_parts = [_replace_plain_segment(part, translations) for part in parts]
-    translated = translated_parts[0]
-    for tag, part in zip(tags, translated_parts[1:]):
-        translated += tag + part
-    return translated.replace("\r", " ").replace("\n", " ").strip()
+    return _process_line_preserving_tags(line, lambda part: _replace_plain_segment(part, translations))
 
 
 def _replace_plain_segment(text: str, translations: dict[str, str]) -> str:

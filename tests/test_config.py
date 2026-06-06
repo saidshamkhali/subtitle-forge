@@ -42,6 +42,15 @@ allowed_latin_names = ["City Hunter"]
     assert config.allowed_latin_names == ["City Hunter"]
 
 
+def test_load_config_uses_larger_cleanup_batch_default(tmp_path):
+    path = tmp_path / "subtitle-forge.toml"
+    path.write_text("[defaults]\n", encoding="utf-8")
+
+    config = load_config(path)
+
+    assert config.cleanup_batch_size == 100
+
+
 def test_load_config_rejects_invalid_cleanup_batch_size(tmp_path):
     path = tmp_path / "subtitle-forge.toml"
     path.write_text(

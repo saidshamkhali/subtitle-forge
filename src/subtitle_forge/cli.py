@@ -43,6 +43,23 @@ app = typer.Typer(
 )
 
 
+def _version_callback(show_version: bool = False) -> None:
+    if show_version:
+        from subtitle_forge import __version__
+
+        typer.echo(f"subtitle-forge {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main_callback(
+    version: bool = typer.Option(
+        False, "--version", help="Show version and exit.", callback=_version_callback
+    ),
+) -> None:
+    pass
+
+
 @app.command()
 def inspect(
     input_path: Annotated[Path, typer.Argument(exists=True, readable=True, help="Subtitle file to inspect.")],

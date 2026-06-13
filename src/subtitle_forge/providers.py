@@ -55,8 +55,10 @@ class CodexExecProvider:
             with open(output_path, encoding="utf-8") as output:
                 last_message = output.read().strip()
         finally:
-            if os.path.exists(output_path):
+            try:
                 os.unlink(output_path)
+            except OSError:
+                pass
 
         return last_message or completed.stdout.strip()
 

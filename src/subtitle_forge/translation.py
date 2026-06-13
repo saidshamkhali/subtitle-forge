@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from subtitle_forge.config import TranslationConfig
+from subtitle_forge.utils import batches
 from subtitle_forge.errors import TranslationValidationError
 from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
@@ -23,11 +24,11 @@ def translate_cues(
     if batch_size < 1:
         raise TranslationValidationError("Batch size must be at least 1.")
 
-    batches = _batches(cues, batch_size)
-    logger.debug("Translating %d cues in %d batches", len(cues), len(batches))
+    batches_list = batches(cues, batch_size)
+    logger.debug("Translating %d cues in %d batches", len(cues), len(batches_list))
 
     translated: list[SubtitleCue] = []
-    for index, batch in enumerate(batches, start=1):
+    for index, batch in enumerate(batches_list, start=1):
         logger.debug("Translation batch %d, size=%d", index, len(batch))
         prompt = build_translation_prompt(batch, source_language, target_language, translation_config)
         response = provider.translate_batch(prompt)
@@ -75,7 +76,3 @@ def parse_provider_response(response: str, batch: list[SubtitleCue]) -> dict[str
         raise TranslationValidationError(f"Provider response is missing cue ids: {', '.join(missing)}.")
 
     return translations
-
-
-def _batches(cues: list[SubtitleCue], size: int) -> list[list[SubtitleCue]]:
-    return [cues[index : index + size] for index in range(0, len(cues), size)]

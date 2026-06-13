@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
+from subtitle_forge.utils import batches
 from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import strip_bidi_and_invisible
@@ -66,7 +67,7 @@ def cleanup_flagged_cues(
             logger.debug("cleanup cache miss: cue %s", cue_id)
             uncached_ids.append(cue_id)
 
-    for index, batch_ids in enumerate(_batches(uncached_ids, batch_size), start=1):
+    for index, batch_ids in enumerate(batches(uncached_ids, batch_size), start=1):
         logger.debug("Cleanup batch %d, cue IDs: %s", index, batch_ids)
         prompt = build_cleanup_prompt(
             batch_ids=batch_ids,
@@ -191,7 +192,3 @@ def _issue_codes_by_id(issues: list[CueIssue], cue_ids: set[str]) -> dict[str, l
             if issue.code not in codes:
                 codes.append(issue.code)
     return issue_map
-
-
-def _batches(items: list[str], size: int) -> list[list[str]]:
-    return [items[index : index + size] for index in range(0, len(items), size)]

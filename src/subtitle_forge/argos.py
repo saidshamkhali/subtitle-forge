@@ -191,7 +191,6 @@ def configure_cuda_dll_directories() -> list[Path]:
             continue
         _CUDA_DLL_DIRECTORY_HANDLES.append(handle)
         _prepend_process_path(directory)
-        _set_windows_dll_directory(directory)
         added.append(directory)
     return added
 
@@ -385,14 +384,6 @@ def _prepend_process_path(directory: Path) -> None:
     directory_text = str(directory)
     if directory_text not in current_entries:
         os.environ["PATH"] = directory_text + os.pathsep + os.environ.get("PATH", "")
-
-
-def _set_windows_dll_directory(directory: Path) -> None:
-    try:
-        ctypes = __import__("ctypes")
-        ctypes.windll.kernel32.SetDllDirectoryW(str(directory))
-    except Exception:
-        pass
 
 
 _ARGOS_NOISE_MESSAGES = (

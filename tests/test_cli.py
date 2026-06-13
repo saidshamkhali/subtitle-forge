@@ -54,7 +54,7 @@ cleanup_provider = "mock"
 
     assert result.exit_code == 0
     assert "Cleanup provider: mock" in result.stdout
-    assert "Codex CLI: skipped because cleanup provider is 'mock'" in result.stdout
+    assert "Cleanup provider check: skipped because cleanup provider is 'mock'" in result.stdout
 
 
 def test_cli_translate_with_mock_cleanup(monkeypatch, tmp_path):

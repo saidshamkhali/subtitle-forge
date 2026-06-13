@@ -91,3 +91,40 @@ keep_intermediate = "false"
 
     with pytest.raises(SubtitleForgeError, match="keep_intermediate"):
         load_config(path)
+
+
+def test_load_config_opencode_defaults(tmp_path):
+    path = tmp_path / "subtitle-forge.toml"
+    path.write_text("[defaults]\ncleanup_provider = \"opencode\"\n", encoding="utf-8")
+
+    config = load_config(path)
+
+    assert config.cleanup_provider == "opencode"
+    assert config.opencode.api_key_env == "OPENCODE_API_KEY"
+    assert config.opencode.base_url == "https://opencode.ai/zen/go/v1/chat/completions"
+    assert config.opencode.model == "deepseek-v4-flash"
+    assert config.opencode.reasoning_effort == "max"
+
+
+def test_load_config_opencode_custom_values(tmp_path):
+    path = tmp_path / "subtitle-forge.toml"
+    path.write_text(
+        """
+[defaults]
+cleanup_provider = "opencode"
+
+[providers.opencode]
+api_key_env = "MY_KEY_ENV"
+base_url = "https://custom.api/v1/chat/completions"
+model = "deepseek-v4-pro"
+reasoning_effort = "high"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.opencode.api_key_env == "MY_KEY_ENV"
+    assert config.opencode.base_url == "https://custom.api/v1/chat/completions"
+    assert config.opencode.model == "deepseek-v4-pro"
+    assert config.opencode.reasoning_effort == "high"

@@ -9,12 +9,14 @@ import tempfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+import httpx
+
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.executables import resolve_executable
 from subtitle_forge.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from subtitle_forge.config import CodexProviderConfig
+    from subtitle_forge.config import CodexProviderConfig, OpenCodeProviderConfig
 
 logger = get_logger("providers")
 
@@ -82,9 +84,78 @@ class MockProvider:
         )
 
 
-class OpenAICompatibleProvider:
+@dataclass(frozen=True)
+class OpenCodeProvider:
+    config: OpenCodeProviderConfig
+    model: str | None = None
+    reasoning_effort: str | None = None
+
     def translate_batch(self, prompt: str) -> str:
-        raise ProviderError("OpenAI-compatible providers are planned for a future phase and are not active in the MVP.")
+        logger.debug("Starting OpenCode batch, prompt length=%d", len(prompt))
+
+        api_key = os.environ.get(self.config.api_key_env)
+        if not api_key:
+            raise ProviderError(
+                f"OpenCode API key not found. Set the {self.config.api_key_env} environment variable."
+            )
+
+        selected_model = self.model or self.config.model
+        selected_reasoning = self.reasoning_effort or self.config.reasoning_effort
+
+        payload: dict = {
+            "model": selected_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a subtitle translation assistant. Return only valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        }
+        if selected_reasoning:
+            payload["reasoning_effort"] = selected_reasoning
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        logger.debug("OpenCode request: model=%s reasoning=%s", selected_model, selected_reasoning)
+
+        try:
+            client = httpx.Client(timeout=120.0)
+            response = client.post(self.config.base_url, json=payload, headers=headers)
+        except httpx.TimeoutException:
+            raise ProviderError("OpenCode API request timed out after 120 seconds.") from None
+        except httpx.RequestError as exc:
+            raise ProviderError(f"OpenCode API request failed: {exc}") from exc
+
+        if response.status_code != 200:
+            detail = response.text[:500] if response.text else "no response body"
+            raise ProviderError(f"OpenCode API returned HTTP {response.status_code}: {detail}")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ProviderError("OpenCode API returned invalid JSON response.") from exc
+
+        if not isinstance(body, dict):
+            raise ProviderError("OpenCode API response is not a JSON object.")
+
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ProviderError("OpenCode API response has no choices array.")
+
+        message = choices[0].get("message")
+        if not isinstance(message, dict):
+            raise ProviderError("OpenCode API response choice has no message object.")
+
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ProviderError("OpenCode API message has no string content.")
+
+        logger.debug("OpenCode batch complete, response length=%d", len(content))
+        return content.strip()
 
 
 def build_codex_command(

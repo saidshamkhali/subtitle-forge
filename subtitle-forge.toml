@@ -12,6 +12,12 @@ extra_args = ["exec", "--skip-git-repo-check"]
 # model = "gpt-5.5"
 # reasoning_effort = "low"
 
+[providers.opencode]
+api_key_env = "OPENCODE_API_KEY"
+base_url = "https://opencode.ai/zen/go/v1/chat/completions"
+model = "deepseek-v4-flash"
+reasoning_effort = "max"
+
 [translation]
 preserve_names = true
 preserve_formatting = true

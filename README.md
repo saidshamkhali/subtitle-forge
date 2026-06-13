@@ -102,8 +102,9 @@ Commands:
 inspect    Print subtitle metadata.
 validate   Check that a subtitle file can be parsed.
 providers  List cleanup providers used after Argos validation.
-doctor     Check Argos, CUDA, and Codex CLI setup.
+doctor     Check Argos, CUDA, and Codex CLI or OpenCode setup.
 translate  Run the full translation pipeline.
+benchmark  Compare translation pipeline performance across multiple cleanup providers.
 ```
 
 Translate options:
@@ -114,9 +115,9 @@ input_path             Subtitle file to translate. Optional only when using --in
 --config, -c           Path to subtitle-forge.toml.
 --from                 Source language code, such as en.
 --to                   Target language code, such as fa.
---model                Optional Codex cleanup model.
---reasoning-effort     Optional Codex cleanup reasoning effort.
---cleanup-provider     Cleanup provider for flagged cues: codex or mock.
+--model                Optional model override for cleanup provider.
+--reasoning-effort     Optional reasoning effort override (low|medium|high|max).
+--cleanup-provider     Cleanup provider for flagged cues: codex, opencode, or mock.
 --argos-device         Argos first-pass device: cpu, cuda, or auto.
 --cleanup-batch-size   Flagged cues per cleanup call.
 --report               Validation report path.
@@ -127,6 +128,66 @@ input_path             Subtitle file to translate. Optional only when using --in
                        If no input file is provided, install the package and exit.
 --prompt               Additional cleanup prompt instructions.
 ```
+
+## Cleanup Providers
+
+Subtitle Forge supports three cleanup providers that repair flagged cues after the Argos first pass:
+
+| Provider  | Backend                         | Setup                              |
+|-----------|---------------------------------|------------------------------------|
+| `codex`   | Local Codex CLI                 | Install Codex CLI, run `codex login` |
+| `opencode`| OpenCode Go HTTP API            | Set `OPENCODE_API_KEY` env var     |
+| `mock`    | Deterministic local (testing)   | None                               |
+
+### Codex (default)
+
+```bash
+subtitle-forge translate input.en.srt --to fa --out output.fa.srt --cleanup-provider codex
+```
+
+Override model or reasoning effort:
+
+```bash
+subtitle-forge translate input.en.srt --to fa --out output.fa.srt --cleanup-provider codex --model gpt-5.5 --reasoning-effort medium
+```
+
+### OpenCode Go
+
+Uses your OpenCode Go subscription via the HTTP chat-completions API. Defaults to DeepSeek V4 Flash with max reasoning effort.
+
+```bash
+# Set your API key
+export OPENCODE_API_KEY="your-key-here"
+
+# Translate with opencode
+subtitle-forge translate input.en.srt --to fa --out output.fa.srt --cleanup-provider opencode
+
+# Use a different model
+subtitle-forge translate input.en.srt --to fa --out output.fa.srt --cleanup-provider opencode --model deepseek-v4-pro
+
+# Check setup
+subtitle-forge doctor
+
+# List available providers
+subtitle-forge providers
+```
+
+## Benchmark
+
+Compare cleanup providers side by side:
+
+```bash
+# Compare codex vs opencode (default)
+subtitle-forge benchmark input.en.srt --to fa --out output.fa.srt
+
+# Compare specific providers
+subtitle-forge benchmark input.en.srt --to fa --out output.fa.srt --providers codex,opencode
+
+# With custom model and reasoning
+subtitle-forge benchmark input.en.srt --to fa --out output.fa.srt --providers codex,opencode --model deepseek-v4-flash --reasoning-effort max
+```
+
+The benchmark runs the full pipeline for each provider and prints a comparison table with per-stage timings, flagged cue counts, validation pass/fail, and a speedup ratio.
 
 ## CUDA
 

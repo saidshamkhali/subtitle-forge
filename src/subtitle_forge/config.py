@@ -13,7 +13,7 @@ logger = get_logger("config")
 
 CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
 VALID_ARGOS_DEVICES = {"auto", "cpu", "cuda"}
-VALID_CLEANUP_PROVIDERS = {"codex", "mock"}
+VALID_CLEANUP_PROVIDERS = {"codex", "mock", "opencode"}
 DEFAULT_CLEANUP_BATCH_SIZE = 100
 
 
@@ -23,6 +23,14 @@ class CodexProviderConfig:
     extra_args: list[str] = field(default_factory=lambda: ["exec", "--skip-git-repo-check"])
     model: str | None = None
     reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True)
+class OpenCodeProviderConfig:
+    api_key_env: str = "OPENCODE_API_KEY"
+    base_url: str = "https://opencode.ai/zen/go/v1/chat/completions"
+    model: str = "deepseek-v4-flash"
+    reasoning_effort: str = "max"
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,7 @@ class AppConfig:
     cleanup_provider: str = "codex"
     keep_intermediate: bool = False
     codex: CodexProviderConfig = field(default_factory=CodexProviderConfig)
+    opencode: OpenCodeProviderConfig = field(default_factory=OpenCodeProviderConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
     allowed_latin_names: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_LATIN_NAMES))
 
@@ -66,6 +75,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     translation = _table(data, "translation", config_path)
     quality = _table(data, "quality", config_path)
     codex_data = _table(providers, "codex", config_path)
+    opencode_data = _table(providers, "opencode", config_path)
 
     return AppConfig(
         source_language=_string(defaults, "source_language", "en", config_path),
@@ -79,6 +89,12 @@ def load_config(path: Path | None = None) -> AppConfig:
             extra_args=_string_list(codex_data, "extra_args", ["exec", "--skip-git-repo-check"], config_path),
             model=_optional_string(codex_data, "model", config_path),
             reasoning_effort=_optional_string(codex_data, "reasoning_effort", config_path),
+        ),
+        opencode=OpenCodeProviderConfig(
+            api_key_env=_string(opencode_data, "api_key_env", "OPENCODE_API_KEY", config_path),
+            base_url=_string(opencode_data, "base_url", "https://opencode.ai/zen/go/v1/chat/completions", config_path),
+            model=_string(opencode_data, "model", "deepseek-v4-flash", config_path),
+            reasoning_effort=_string(opencode_data, "reasoning_effort", "max", config_path),
         ),
         translation=TranslationConfig(
             style=_string(translation, "style", "natural subtitle translation", config_path),

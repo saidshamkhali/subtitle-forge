@@ -22,6 +22,7 @@ from subtitle_forge.argos import (
 )
 from subtitle_forge.cleanup import cleanup_flagged_cues
 from subtitle_forge.config import (
+    VALID_CLEANUP_PROVIDERS,
     AppConfig,
     TranslationConfig,
     load_codex_default_model,
@@ -32,7 +33,7 @@ from subtitle_forge.errors import SubtitleForgeError
 from subtitle_forge.executables import resolve_executable
 from subtitle_forge.logging_config import configure_logging
 from subtitle_forge.normalization import normalize_cues_for_target
-from subtitle_forge.providers import CodexExecProvider, MockProvider, TranslationProvider
+from subtitle_forge.providers import CodexExecProvider, MockProvider, OpenCodeProvider, TranslationProvider
 from subtitle_forge.quality import ValidationReport, validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
 
@@ -104,15 +105,20 @@ def providers(
     typer.echo(f"Cleanup provider: {config.cleanup_provider}")
     typer.echo("Available cleanup providers:")
     typer.echo("- codex: uses local Codex CLI for flagged-cue repair")
+    typer.echo("- opencode: uses OpenCode Go HTTP API for flagged-cue repair")
     typer.echo("- mock: deterministic local cleanup provider for tests and dry runs")
 
 
 @app.command()
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
+    cleanup_provider_name: Annotated[
+        str | None,
+        typer.Option("--cleanup-provider", help="Override cleanup provider to check: codex, opencode, or mock."),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
 ) -> None:
-    """Check local setup for ArgosTranslate and the Codex cleanup provider."""
+    """Check local setup for ArgosTranslate and the cleanup provider."""
     config = _load_config_or_fail(config_path)
     configure_logging(verbose)
     try:
@@ -127,50 +133,18 @@ def doctor(
     typer.echo(f"Argos device default: {config.argos_device}")
     typer.echo(f"CUDA status: {_cuda_status()}")
     typer.echo("Pipeline: ArgosTranslate -> normalize -> validate -> cleanup -> normalize -> validate")
-    typer.echo(f"Cleanup provider: {config.cleanup_provider}")
 
-    if config.cleanup_provider != "codex":
-        typer.echo(f"Codex CLI: skipped because cleanup provider is '{config.cleanup_provider}'")
+    selected_provider = (cleanup_provider_name or config.cleanup_provider).lower()
+    typer.echo(f"Cleanup provider: {selected_provider}")
+
+    if selected_provider == "codex":
+        _doctor_check_codex(config)
+        return
+    if selected_provider == "opencode":
+        _doctor_check_opencode(config)
         return
 
-    command = config.codex.command
-    executable = resolve_executable(command)
-    if not executable:
-        typer.secho(f"Missing: Codex CLI command '{command}' was not found.", fg=typer.colors.RED)
-        typer.echo("Install Codex CLI, then run 'codex login' with your ChatGPT account.")
-        raise typer.Exit(1)
-
-    completed = subprocess.run(
-        [executable, "--version"],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    version = completed.stdout.strip() or completed.stderr.strip() or "version unavailable"
-    codex_default_model = load_codex_default_model()
-    codex_default_reasoning_effort = load_codex_default_reasoning_effort()
-    selected_model = config.codex.model or codex_default_model
-    typer.echo(f"Codex CLI: {version}")
-    if config.codex.model:
-        typer.echo(f"Model: {config.codex.model} from subtitle-forge.toml")
-    elif codex_default_model:
-        typer.echo(f"Model: {codex_default_model} from ~/.codex/config.toml")
-    else:
-        typer.echo("Model: local Codex default")
-    if selected_model == "gpt-5.5" and "0.106.0" in version:
-        typer.secho(
-            "Warning: gpt-5.5 may require a newer Codex CLI/app than the one currently installed.",
-            fg=typer.colors.YELLOW,
-        )
-    if config.codex.reasoning_effort:
-        typer.echo(f"Reasoning effort: {config.codex.reasoning_effort} from subtitle-forge.toml")
-    elif codex_default_reasoning_effort:
-        typer.echo(f"Reasoning effort: {codex_default_reasoning_effort} from ~/.codex/config.toml")
-    else:
-        typer.echo("Reasoning effort: local Codex default")
-    typer.echo("Override reasoning with: --reasoning-effort low|medium|high")
-    typer.echo("Login: run 'codex login' if this Codex CLI is not already connected to your ChatGPT account.")
+    typer.echo(f"Cleanup provider check: skipped because cleanup provider is '{selected_provider}'")
 
 
 @app.command()
@@ -180,13 +154,13 @@ def translate(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
     source_language: Annotated[str | None, typer.Option("--from", help="Source language code/name.")] = None,
     target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
-    model: Annotated[str | None, typer.Option("--model", help="Optional Codex model override.")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="Optional model override for cleanup provider.")] = None,
     reasoning_effort: Annotated[
-        str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")
+        str | None, typer.Option("--reasoning-effort", help="Optional reasoning effort override (low|medium|high|max).")
     ] = None,
     cleanup_provider_name: Annotated[
         str | None,
-        typer.Option("--cleanup-provider", help="Cleanup provider for flagged cues: codex or mock."),
+        typer.Option("--cleanup-provider", help="Cleanup provider for flagged cues: codex, opencode, or mock."),
     ] = None,
     argos_device: Annotated[
         str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")
@@ -231,8 +205,6 @@ def translate(
         keep_intermediate=keep_intermediate,
         prompt=prompt,
     )
-    started_at = time.perf_counter()
-    timings: list[tuple[str, float]] = []
 
     try:
         if install_argos_package and settings.input_path is None:
@@ -255,59 +227,30 @@ def translate(
             settings.argos_device,
         )
 
-        cues, read_seconds = _stage_read_subtitles(settings.input_path)
-        timings.append(("Read", read_seconds))
-
         if install_argos_package:
             _install_argos_package_for_cli(settings.source, settings.target)
 
-        argos_cues, argos_seconds = _stage_argos_translation(cues, settings)
-        timings.append(("Argos", argos_seconds))
+        result = _run_full_pipeline(settings, show_output=True)
 
-        normalized_cues, intermediate_paths, normalize_seconds = _stage_normalize(
-            argos_cues, settings
-        )
-        timings.append(("Normalize", normalize_seconds))
-
-        initial_report, validate_seconds = _stage_initial_validation(cues, normalized_cues, settings)
-        timings.append(("Validate", validate_seconds))
-
-        cleaned_cues, cleanup_seconds = _stage_cleanup(cues, normalized_cues, initial_report, settings)
-        timings.append(("Cleanup", cleanup_seconds))
-
-        final_cues, final_report, finalize_seconds = _stage_finalize(cues, cleaned_cues, settings)
-        timings.append(("Finalize", finalize_seconds))
-
-        _write_report(
-            report_path=settings.report_path,
-            input_path=settings.input_path,
-            output_path=settings.output_path,
-            source_language=settings.source,
-            target_language=settings.target,
-            initial_report=initial_report,
-            final_report=final_report,
-            intermediate_paths=intermediate_paths,
-        )
-        elapsed_seconds = time.perf_counter() - started_at
         _print_summary(
             settings.output_path,
             settings.report_path,
-            len(cues),
-            initial_report,
-            final_report,
-            elapsed_seconds,
-            timings,
+            len(result.cues),
+            result.initial_report,
+            result.final_report,
+            result.elapsed_seconds,
+            result.timings,
         )
-        if not validation_passed(final_report):
+        if not validation_passed(result.final_report):
             _warning(
-                f"Final validation failed with {len(final_report.suspicious_cue_ids)} suspicious cues remaining. "
-                f"Review the report: {settings.report_path}"
+                f"Final validation failed with {len(result.final_report.suspicious_cue_ids)} "
+                f"suspicious cues remaining. Review the report: {settings.report_path}"
             )
             raise typer.Exit(1)
     except SubtitleForgeError as exc:
         _fail(exc)
 
-    _success(f"Translated {len(final_cues)} cues to {settings.output_path}")
+    _success(f"Translated {len(result.final_cues)} cues to {settings.output_path}")
 
 
 def _build_cleanup_provider(
@@ -325,7 +268,9 @@ def _build_cleanup_provider(
         return CodexExecProvider(config.codex, model=model, reasoning_effort=selected_reasoning_effort)
     if normalized == "mock":
         return MockProvider(target_language=target_language)
-    raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock.")
+    if normalized == "opencode":
+        return OpenCodeProvider(config.opencode, model=model, reasoning_effort=reasoning_effort)
+    raise SubtitleForgeError(f"Unknown cleanup provider '{name}'. Expected one of: codex, mock, opencode.")
 
 
 def _resolve_output_format(input_path: Path, output_path: Path) -> str:
@@ -437,7 +382,102 @@ def _resolve_translate_settings(
     )
 
 
+@dataclass(frozen=True)
+class _PipelineResult:
+    cues: list[SubtitleCue]
+    final_cues: list[SubtitleCue]
+    initial_report: ValidationReport
+    final_report: ValidationReport
+    intermediate_paths: dict[str, str]
+    timings: list[tuple[str, float]]
+    elapsed_seconds: float
+
+
+def _run_full_pipeline(settings: _TranslateSettings, *, show_output: bool = True) -> _PipelineResult:
+    started_at = time.perf_counter()
+    timings: list[tuple[str, float]] = []
+
+    assert settings.input_path is not None
+    assert settings.output_path is not None
+    assert settings.report_path is not None
+    assert settings.output_format is not None
+
+    _maybe_stage(show_output, "1/6 Reading subtitles", f"Source: {settings.input_path}")
+    cues, read_seconds = _stage_read_subtitles(settings.input_path, show_output=show_output)
+    timings.append(("Read", read_seconds))
+
+    _maybe_stage(show_output, "2/6 Argos full-file translation", "Local first pass; timings stay locked")
+    argos_cues, argos_seconds = _stage_argos_translation(cues, settings, show_output=show_output)
+    timings.append(("Argos", argos_seconds))
+
+    _maybe_stage(
+        show_output,
+        "3/6 Normalizing Persian subtitle display",
+        "Adding RTL/LTR controls and safe Persian spacing",
+    )
+    normalized_cues, intermediate_paths, normalize_seconds = _stage_normalize(
+        argos_cues, settings, show_output=show_output
+    )
+    timings.append(("Normalize", normalize_seconds))
+
+    _maybe_stage(
+        show_output,
+        "4/6 Validating and flagging suspicious cues",
+        "Checking structure, mojibake, tags, RTL marks, and Latin text",
+    )
+    initial_report, validate_seconds = _stage_initial_validation(
+        cues, normalized_cues, settings, show_output=show_output
+    )
+    timings.append(("Validate", validate_seconds))
+
+    _maybe_stage(show_output, "5/6 AI cleanup", f"Provider: {settings.cleanup_provider}")
+    cleaned_cues, cleanup_seconds = _stage_cleanup(
+        cues, normalized_cues, initial_report, settings, show_output=show_output
+    )
+    timings.append(("Cleanup", cleanup_seconds))
+
+    _maybe_stage(show_output, "6/6 Final normalization, validation, and write", f"Output: {settings.output_path}")
+    final_cues, final_report, finalize_seconds = _stage_finalize(cues, cleaned_cues, settings, show_output=show_output)
+    timings.append(("Finalize", finalize_seconds))
+
+    _write_report(
+        report_path=settings.report_path,
+        input_path=settings.input_path,
+        output_path=settings.output_path,
+        source_language=settings.source,
+        target_language=settings.target,
+        initial_report=initial_report,
+        final_report=final_report,
+        intermediate_paths=intermediate_paths,
+    )
+    elapsed_seconds = time.perf_counter() - started_at
+    return _PipelineResult(
+        cues=cues,
+        final_cues=final_cues,
+        initial_report=initial_report,
+        final_report=final_report,
+        intermediate_paths=intermediate_paths,
+        timings=timings,
+        elapsed_seconds=elapsed_seconds,
+    )
+
+
+def _maybe_stage(show: bool, title: str, detail: str | None = None) -> None:
+    if show:
+        _stage(title, detail)
+
+
 def _require_translate_settings(settings: _TranslateSettings) -> _TranslateSettings:
+    if settings.input_path is None:
+        raise SubtitleForgeError(
+            "Input subtitle path is required. To install an Argos package without translating, run: "
+            f"subtitle-forge translate --from {settings.source} --to {settings.target} --install-argos-package"
+        )
+    if settings.output_path is None:
+        raise SubtitleForgeError("Output path is required for translation. Pass it with '--out OUTPUT_PATH'.")
+    if settings.report_path is None or settings.output_format is None:
+        raise SubtitleForgeError("Validation report path could not be resolved.")
+    return settings
     if settings.input_path is None:
         raise SubtitleForgeError(
             "Input subtitle path is required. To install an Argos package without translating, run: "
@@ -468,20 +508,25 @@ def _validate_translate_inputs(settings: _TranslateSettings) -> None:
             )
 
 
-def _stage_read_subtitles(input_path: Path) -> tuple[list[SubtitleCue], float]:
+def _stage_read_subtitles(input_path: Path, *, show_output: bool = True) -> tuple[list[SubtitleCue], float]:
     started = time.perf_counter()
-    _stage("1/6 Reading subtitles", f"Source: {input_path}")
+    if show_output:
+        _stage("1/6 Reading subtitles", f"Source: {input_path}")
     cues = read_subtitles(input_path)
-    _detail(f"{len(cues)} cues loaded")
+    if show_output:
+        _detail(f"{len(cues)} cues loaded")
     return cues, time.perf_counter() - started
 
 
 def _stage_argos_translation(
     cues: list[SubtitleCue],
     settings: _TranslateSettings,
+    *,
+    show_output: bool = True,
 ) -> tuple[list[SubtitleCue], float]:
     started = time.perf_counter()
-    _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
+    if show_output:
+        _stage("2/6 Argos full-file translation", "Local first pass; timings stay locked")
     with typer.progressbar(length=len(cues), label="Translating cues") as progress:
         argos_cues = translate_cues_with_argos(
             cues,
@@ -496,11 +541,14 @@ def _stage_argos_translation(
 def _stage_normalize(
     argos_cues: list[SubtitleCue],
     settings: _TranslateSettings,
+    *,
+    show_output: bool = True,
 ) -> tuple[list[SubtitleCue], dict[str, str], float]:
     assert settings.output_path is not None
     assert settings.output_format is not None
     started = time.perf_counter()
-    _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
+    if show_output:
+        _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
     normalized_cues = normalize_cues_for_target(argos_cues, settings.target, settings.config.allowed_latin_names)
     intermediate_paths = _write_intermediate_files(
         settings.output_path,
@@ -509,7 +557,7 @@ def _stage_normalize(
         normalized_cues,
         settings.keep_intermediate,
     )
-    if intermediate_paths:
+    if intermediate_paths and show_output:
         _detail(f"Intermediate files kept: {len(intermediate_paths)}")
     return normalized_cues, intermediate_paths, time.perf_counter() - started
 
@@ -518,17 +566,21 @@ def _stage_initial_validation(
     cues: list[SubtitleCue],
     normalized_cues: list[SubtitleCue],
     settings: _TranslateSettings,
+    *,
+    show_output: bool = True,
 ) -> tuple[ValidationReport, float]:
     started = time.perf_counter()
-    _stage(
-        "4/6 Validating and flagging suspicious cues",
-        "Checking structure, mojibake, tags, RTL marks, and Latin text",
-    )
+    if show_output:
+        _stage(
+            "4/6 Validating and flagging suspicious cues",
+            "Checking structure, mojibake, tags, RTL marks, and Latin text",
+        )
     report = validate_translation(cues, normalized_cues, settings.config.allowed_latin_names)
-    _detail(f"Flagged suspicious cues: {len(report.suspicious_cue_ids)}")
-    issue_summary = _issue_summary(report)
-    if issue_summary:
-        _detail(f"Top issue types: {issue_summary}")
+    if show_output:
+        _detail(f"Flagged suspicious cues: {len(report.suspicious_cue_ids)}")
+        issue_summary = _issue_summary(report)
+        if issue_summary:
+            _detail(f"Top issue types: {issue_summary}")
     return report, time.perf_counter() - started
 
 
@@ -537,15 +589,19 @@ def _stage_cleanup(
     normalized_cues: list[SubtitleCue],
     initial_report: ValidationReport,
     settings: _TranslateSettings,
+    *,
+    show_output: bool = True,
 ) -> tuple[list[SubtitleCue], float]:
     assert settings.output_path is not None
     started = time.perf_counter()
     flagged_ids = initial_report.suspicious_cue_ids
     batch_count = math.ceil(len(flagged_ids) / settings.cleanup_batch_size) if flagged_ids else 0
-    _stage("5/6 AI cleanup", f"{len(flagged_ids)} flagged cues in {batch_count} batches")
+    if show_output:
+        _stage("5/6 AI cleanup", f"{len(flagged_ids)} flagged cues in {batch_count} batches")
 
     if not batch_count:
-        _success("No suspicious cues flagged; skipping AI cleanup.")
+        if show_output:
+            _success("No suspicious cues flagged; skipping AI cleanup.")
         return normalized_cues, time.perf_counter() - started
 
     provider = _build_cleanup_provider(
@@ -557,13 +613,14 @@ def _stage_cleanup(
     )
     cache_path = _cleanup_cache_path(settings)
     cleanup_cache = _load_cleanup_cache(cache_path)
-    if cleanup_cache:
+    if cleanup_cache and show_output:
         _detail(f"Cleanup cache entries: {len(cleanup_cache)}")
 
     def on_cleanup_batch(index: int, batch_ids: list[str]) -> None:
-        preview = ", ".join(batch_ids[:8])
-        suffix = "..." if len(batch_ids) > 8 else ""
-        _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
+        if show_output:
+            preview = ", ".join(batch_ids[:8])
+            suffix = "..." if len(batch_ids) > 8 else ""
+            _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
 
     with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
         def _on_batch(index: int, ids: list[str]) -> None:
@@ -592,11 +649,14 @@ def _stage_finalize(
     cues: list[SubtitleCue],
     cleaned_cues: list[SubtitleCue],
     settings: _TranslateSettings,
+    *,
+    show_output: bool = True,
 ) -> tuple[list[SubtitleCue], ValidationReport, float]:
     assert settings.output_path is not None
     assert settings.output_format is not None
     started = time.perf_counter()
-    _stage("6/6 Final normalization, validation, and write", f"Output: {settings.output_path}")
+    if show_output:
+        _stage("6/6 Final normalization, validation, and write", f"Output: {settings.output_path}")
     final_cues = normalize_cues_for_target(cleaned_cues, settings.target, settings.config.allowed_latin_names)
     final_report = validate_translation(cues, final_cues, settings.config.allowed_latin_names)
     write_subtitles(final_cues, settings.output_path, settings.output_format)
@@ -767,6 +827,258 @@ def _cuda_status() -> str:
 
     detail = f" via {added_dirs[0]}" if added_dirs else ""
     return f"{device_count} CUDA device(s), CUDA runtime looks loadable{detail}"
+
+
+def _doctor_check_codex(config: AppConfig) -> None:
+    command = config.codex.command
+    executable = resolve_executable(command)
+    if not executable:
+        typer.secho(f"Missing: Codex CLI command '{command}' was not found.", fg=typer.colors.RED)
+        typer.echo("Install Codex CLI, then run 'codex login' with your ChatGPT account.")
+        raise typer.Exit(1)
+
+    completed = subprocess.run(
+        [executable, "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    version = completed.stdout.strip() or completed.stderr.strip() or "version unavailable"
+    codex_default_model = load_codex_default_model()
+    codex_default_reasoning_effort = load_codex_default_reasoning_effort()
+    selected_model = config.codex.model or codex_default_model
+    typer.echo(f"Codex CLI: {version}")
+    if config.codex.model:
+        typer.echo(f"Model: {config.codex.model} from subtitle-forge.toml")
+    elif codex_default_model:
+        typer.echo(f"Model: {codex_default_model} from ~/.codex/config.toml")
+    else:
+        typer.echo("Model: local Codex default")
+    if selected_model == "gpt-5.5" and "0.106.0" in version:
+        typer.secho(
+            "Warning: gpt-5.5 may require a newer Codex CLI/app than the one currently installed.",
+            fg=typer.colors.YELLOW,
+        )
+    if config.codex.reasoning_effort:
+        typer.echo(f"Reasoning effort: {config.codex.reasoning_effort} from subtitle-forge.toml")
+    elif codex_default_reasoning_effort:
+        typer.echo(f"Reasoning effort: {codex_default_reasoning_effort} from ~/.codex/config.toml")
+    else:
+        typer.echo("Reasoning effort: local Codex default")
+    typer.echo("Override reasoning with: --reasoning-effort low|medium|high")
+    typer.echo("Login: run 'codex login' if this Codex CLI is not already connected to your ChatGPT account.")
+
+
+def _doctor_check_opencode(config: AppConfig) -> None:
+    import os
+
+    import httpx
+
+    oc = config.opencode
+    api_key = os.environ.get(oc.api_key_env)
+    if api_key:
+        typer.echo(f"OpenCode API key: found in ${oc.api_key_env}")
+    else:
+        typer.secho(f"Missing: ${oc.api_key_env} environment variable is not set.", fg=typer.colors.RED)
+        typer.echo(f"Set the {oc.api_key_env} environment variable with your OpenCode Go API key.")
+        raise typer.Exit(1)
+
+    typer.echo(f"OpenCode model: {oc.model} from subtitle-forge.toml")
+    typer.echo(f"OpenCode reasoning effort: {oc.reasoning_effort}")
+    typer.echo("Override reasoning with: --reasoning-effort low|medium|high|max")
+    typer.echo(f"OpenCode base URL: {oc.base_url}")
+
+    try:
+        client = httpx.Client(timeout=10.0)
+        response = client.get(
+            oc.base_url.rstrip("/").rsplit("/", 1)[0] + "/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        if response.status_code == 200:
+            typer.echo("OpenCode connectivity: OK")
+        else:
+            typer.secho(
+                f"OpenCode connectivity check returned HTTP {response.status_code}.",
+                fg=typer.colors.YELLOW,
+            )
+    except httpx.TimeoutException:
+        typer.secho("OpenCode connectivity check timed out.", fg=typer.colors.YELLOW)
+    except httpx.RequestError as exc:
+        typer.secho(f"OpenCode connectivity check failed: {exc}", fg=typer.colors.YELLOW)
+
+
+@app.command()
+def benchmark(
+    input_path: Annotated[Path, typer.Argument(exists=True, readable=True, help="Subtitle file to translate.")],
+    output_path: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Output subtitle path (last provider wins).")
+    ] = None,
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
+    source_language: Annotated[str | None, typer.Option("--from", help="Source language code/name.")] = None,
+    target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
+    providers_arg: Annotated[
+        str, typer.Option("--providers", help="Comma-separated list of providers to compare (e.g., codex,opencode).")
+    ] = "codex,opencode",
+    model: Annotated[str | None, typer.Option("--model", help="Optional model override for all providers.")] = None,
+    reasoning_effort: Annotated[
+        str | None, typer.Option("--reasoning-effort", help="Optional reasoning effort override for all providers.")
+    ] = None,
+    argos_device: Annotated[
+        str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")
+    ] = None,
+    cleanup_batch_size: Annotated[
+        int | None,
+        typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call."),
+    ] = None,
+    prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
+) -> None:
+    """Compare translation pipeline performance across multiple cleanup providers."""
+    config = _load_config_or_fail(config_path)
+    configure_logging(verbose)
+
+    provider_names = [p.strip() for p in providers_arg.split(",")]
+    if len(provider_names) < 2:
+        typer.secho(
+            "Error: benchmark requires at least two providers (e.g., --providers codex,opencode).",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+
+    for name in provider_names:
+        if name.lower() not in VALID_CLEANUP_PROVIDERS:
+            typer.secho(
+                f"Error: unknown provider '{name}'. "
+                f"Available: {', '.join(sorted(VALID_CLEANUP_PROVIDERS))}.",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(1)
+
+    source = source_language or config.source_language
+    target = target_language or config.target_language
+
+    resolved_output = output_path or input_path.with_name(f"{input_path.stem}.benchmark{input_path.suffix}")
+    selected_cleanup_batch_size = cleanup_batch_size or config.cleanup_batch_size
+
+    typer.echo()
+    typer.secho("Subtitle Forge Benchmark", fg=typer.colors.MAGENTA, bold=True)
+    typer.echo(f"Input: {input_path}  |  Languages: {source} -> {target}")
+    typer.echo(f"Providers: {', '.join(provider_names)}")
+    typer.echo("-" * 68)
+
+    results: list[tuple[str, _PipelineResult]] = []
+
+    for provider_name in provider_names:
+        provider_output = resolved_output.with_name(f"{resolved_output.stem}.{provider_name}{resolved_output.suffix}")
+        provider_report = provider_output.with_suffix(provider_output.suffix + ".report.json")
+
+        provider_settings = _TranslateSettings(
+            input_path=input_path,
+            output_path=provider_output,
+            report_path=provider_report,
+            output_format=_resolve_output_format(input_path, provider_output),
+            source=source,
+            target=target,
+            cleanup_provider=provider_name.lower(),
+            argos_device=argos_device or config.argos_device,
+            cleanup_batch_size=selected_cleanup_batch_size,
+            keep_intermediate=False,
+            translation_config=_merge_translation_config(config.translation, prompt),
+            model=model,
+            reasoning_effort=reasoning_effort,
+            config=config,
+        )
+
+        _validate_translate_inputs(provider_settings)
+        _print_translate_header(
+            provider_settings.input_path,
+            provider_settings.output_path,
+            provider_settings.source,
+            provider_settings.target,
+            provider_settings.cleanup_provider,
+            provider_settings.argos_device,
+        )
+
+        result = _run_full_pipeline(provider_settings, show_output=True)
+        results.append((provider_name, result))
+
+        if not validation_passed(result.final_report):
+            _warning(
+                f"{provider_name}: validation failed with {len(result.final_report.suspicious_cue_ids)} "
+                f"suspicious cues remaining. Report: {provider_settings.report_path}"
+            )
+        else:
+            _success(f"{provider_name}: completed in {result.elapsed_seconds:.1f}s")
+
+        typer.echo()
+
+    # Print comparison table
+    _print_benchmark_table(results)
+
+    # Final write to requested output path (last provider wins)
+    last_provider, last_result = results[-1]
+    write_subtitles(last_result.final_cues, resolved_output, _resolve_output_format(input_path, resolved_output))
+    typer.echo(f"Final output written (from {last_provider}): {resolved_output}")
+
+
+def _print_benchmark_table(results: list[tuple[str, _PipelineResult]]) -> None:
+    typer.secho("Benchmark Comparison", fg=typer.colors.MAGENTA, bold=True)
+    typer.echo("-" * 68)
+
+    # Header
+    header = f"{'Stage':<14}"
+    for name, _ in results:
+        header += f"  {name:>12}"
+    typer.echo(header)
+    typer.echo("-" * 68)
+
+    # Stage timings
+    stage_names = ["Read", "Argos", "Normalize", "Validate", "Cleanup", "Finalize"]
+    for stage_name in stage_names:
+        row = f"{stage_name:<14}"
+        for _, result in results:
+            seconds = next((s for label, s in result.timings if label == stage_name), 0.0)
+            row += f"  {seconds:>9.1f}s  "
+        typer.echo(row)
+
+    typer.echo("-" * 68)
+
+    # Total
+    row = f"{'Total':<14}"
+    for _, result in results:
+        row += f"  {result.elapsed_seconds:>9.1f}s  "
+    typer.echo(row)
+
+    # Flagged cues
+    typer.echo()
+    row = f"{'Flagged (bef)':<14}"
+    for _, result in results:
+        row += f"  {len(result.initial_report.suspicious_cue_ids):>9}  "
+    typer.echo(row)
+
+    row = f"{'Flagged (aft)':<14}"
+    for _, result in results:
+        row += f"  {len(result.final_report.suspicious_cue_ids):>9}  "
+    typer.echo(row)
+
+    row = f"{'Passed':<14}"
+    for _, result in results:
+        passed = "yes" if validation_passed(result.final_report) else "NO"
+        row += f"  {passed:>12}"
+    typer.echo(row)
+
+    # Speedup
+    if len(results) >= 2:
+        typer.echo()
+        base_name, base = results[0]
+        for name, result in results[1:]:
+            if result.elapsed_seconds > 0 and base.elapsed_seconds > 0:
+                ratio = base.elapsed_seconds / result.elapsed_seconds
+                faster = name if ratio > 1 else base_name
+                slower = base_name if ratio > 1 else name
+                multiplier = ratio if ratio > 1 else 1 / ratio
+                typer.echo(f"  {faster} is {multiplier:.1f}x faster than {slower}")
 
 
 if __name__ == "__main__":

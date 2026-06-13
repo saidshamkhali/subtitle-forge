@@ -103,7 +103,7 @@ def test_load_config_opencode_defaults(tmp_path):
     assert config.opencode.api_key_env == "OPENCODE_API_KEY"
     assert config.opencode.base_url == "https://opencode.ai/zen/go/v1/chat/completions"
     assert config.opencode.model == "deepseek-v4-flash"
-    assert config.opencode.reasoning_effort == "max"
+    assert config.opencode.reasoning_effort is None
 
 
 def test_load_config_opencode_custom_values(tmp_path):

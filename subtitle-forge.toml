@@ -16,7 +16,7 @@ extra_args = ["exec", "--skip-git-repo-check"]
 api_key_env = "OPENCODE_API_KEY"
 base_url = "https://opencode.ai/zen/go/v1/chat/completions"
 model = "deepseek-v4-flash"
-reasoning_effort = "max"
+# reasoning_effort = "max"  # Uncomment to enable deep reasoning (adds latency)
 
 [translation]
 preserve_names = true

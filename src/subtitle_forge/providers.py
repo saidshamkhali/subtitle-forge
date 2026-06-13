@@ -100,7 +100,7 @@ class OpenCodeProvider:
             )
 
         selected_model = self.model or self.config.model
-        selected_reasoning = self.reasoning_effort or self.config.reasoning_effort
+        selected_reasoning = self.reasoning_effort if self.reasoning_effort is not None else self.config.reasoning_effort
 
         payload: dict = {
             "model": selected_model,
@@ -111,6 +111,7 @@ class OpenCodeProvider:
                 },
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": 16384,
         }
         if selected_reasoning:
             payload["reasoning_effort"] = selected_reasoning
@@ -153,6 +154,15 @@ class OpenCodeProvider:
         content = message.get("content")
         if not isinstance(content, str):
             raise ProviderError("OpenCode API message has no string content.")
+
+        if not content.strip():
+            logger.warning("OpenCode returned empty content. Full response: %s", json.dumps(body, ensure_ascii=False)[:2000])
+            finish_reason = choices[0].get("finish_reason", "unknown")
+            raise ProviderError(
+                f"OpenCode API returned empty content (finish_reason={finish_reason}). "
+                "This may indicate the max_tokens limit was too low for this batch, "
+                "or the model refused the request."
+            )
 
         logger.debug("OpenCode batch complete, response length=%d", len(content))
         return content.strip()

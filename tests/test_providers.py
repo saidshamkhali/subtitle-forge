@@ -125,7 +125,7 @@ class TestOpenCodeProvider:
 
     def test_uses_config_defaults_when_no_overrides(self, monkeypatch):
         monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
-        config = OpenCodeProviderConfig(model="config-model", reasoning_effort="max")
+        config = OpenCodeProviderConfig(model="config-model", reasoning_effort="high")
 
         captured_payload = {}
 
@@ -143,11 +143,13 @@ class TestOpenCodeProvider:
             provider.translate_batch("prompt")
 
         assert captured_payload["json"]["model"] == "config-model"
-        assert captured_payload["json"]["reasoning_effort"] == "max"
+        assert captured_payload["json"]["reasoning_effort"] == "high"
+        assert captured_payload["json"]["max_tokens"] == 16384
+        assert "temperature" not in captured_payload["json"]
 
     def test_omits_reasoning_effort_when_none(self, monkeypatch):
         monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
-        config = OpenCodeProviderConfig(model="m", reasoning_effort="")
+        config = OpenCodeProviderConfig(model="m")  # reasoning_effort defaults to None
 
         captured_payload = {}
 
@@ -161,11 +163,12 @@ class TestOpenCodeProvider:
             return mock_resp
 
         with mock.patch.object(httpx.Client, "post", mock_post):
-            # Empty string is falsy, so reasoning_effort should be omitted
             provider = OpenCodeProvider(config, reasoning_effort=None)
             provider.translate_batch("prompt")
 
         assert "reasoning_effort" not in captured_payload["json"]
+        assert captured_payload["json"]["max_tokens"] == 16384
+        assert "temperature" not in captured_payload["json"]
 
     def test_handles_missing_message_field(self, monkeypatch):
         monkeypatch.setenv("OPENCODE_API_KEY", "test-key")

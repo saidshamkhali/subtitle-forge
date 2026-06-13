@@ -30,7 +30,7 @@ class OpenCodeProviderConfig:
     api_key_env: str = "OPENCODE_API_KEY"
     base_url: str = "https://opencode.ai/zen/go/v1/chat/completions"
     model: str = "deepseek-v4-flash"
-    reasoning_effort: str = "max"
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +94,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             api_key_env=_string(opencode_data, "api_key_env", "OPENCODE_API_KEY", config_path),
             base_url=_string(opencode_data, "base_url", "https://opencode.ai/zen/go/v1/chat/completions", config_path),
             model=_string(opencode_data, "model", "deepseek-v4-flash", config_path),
-            reasoning_effort=_string(opencode_data, "reasoning_effort", "max", config_path),
+            reasoning_effort=_optional_string(opencode_data, "reasoning_effort", config_path),
         ),
         translation=TranslationConfig(
             style=_string(translation, "style", "natural subtitle translation", config_path),

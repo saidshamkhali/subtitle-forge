@@ -885,14 +885,14 @@ def _doctor_check_opencode(config: AppConfig) -> None:
         raise typer.Exit(1)
 
     typer.echo(f"OpenCode model: {oc.model} from subtitle-forge.toml")
-    typer.echo(f"OpenCode reasoning effort: {oc.reasoning_effort}")
-    typer.echo("Override reasoning with: --reasoning-effort low|medium|high|max")
+    typer.echo(f"OpenCode reasoning effort: {oc.reasoning_effort or 'off (no reasoning, fastest)'} ")
+    typer.echo("Enable reasoning with: --reasoning-effort low|medium|high|max")
     typer.echo(f"OpenCode base URL: {oc.base_url}")
 
     try:
         client = httpx.Client(timeout=10.0)
         response = client.get(
-            oc.base_url.rstrip("/").rsplit("/", 1)[0] + "/models",
+            oc.base_url.rstrip("/").rsplit("/", 2)[0] + "/models",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         if response.status_code == 200:

@@ -1,16 +1,19 @@
 ﻿from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from typing import Protocol
 
 from subtitle_forge.config import CodexProviderConfig
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.executables import resolve_executable
+from subtitle_forge.logging_config import get_logger
+
+logger = get_logger("providers")
 
 
 class TranslationProvider(Protocol):
@@ -25,7 +28,9 @@ class CodexExecProvider:
     reasoning_effort: str | None = None
 
     def translate_batch(self, prompt: str) -> str:
+        logger.debug("Starting Codex batch, prompt length=%d", len(prompt))
         command = build_codex_command(self.config, self.model, self.reasoning_effort)
+        logger.debug("Codex command: %s", " ".join(command))
 
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".txt", delete=False) as output_file:
             output_path = output_file.name
@@ -40,8 +45,11 @@ class CodexExecProvider:
                 encoding="utf-8",
             )
 
+            logger.debug("Codex subprocess completed, returncode=%d", completed.returncode)
+
             if completed.returncode != 0:
                 stderr = completed.stderr.strip()
+                logger.warning("Codex failure: %s", stderr)
                 raise ProviderError(_format_codex_failure(completed.returncode, stderr))
 
             with open(output_path, encoding="utf-8") as output:

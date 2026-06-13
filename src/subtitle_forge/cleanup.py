@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Callable
+from collections.abc import Callable
 
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import strip_bidi_and_invisible
 from subtitle_forge.providers import TranslationProvider
 from subtitle_forge.quality import CueIssue
+
+logger = get_logger("cleanup")
 
 
 def cleanup_flagged_cues(
@@ -30,6 +33,8 @@ def cleanup_flagged_cues(
         raise TranslationValidationError("Cleanup batch size must be at least 1.")
     if not flagged_ids:
         return current_cues
+
+    logger.debug("Cleanup: %d flagged cues, batch_size=%d", len(flagged_ids), batch_size)
 
     source_by_id = {cue.id: cue for cue in source_cues}
     current_by_id = {cue.id: cue for cue in current_cues}
@@ -55,11 +60,14 @@ def cleanup_flagged_cues(
         )
         cache_keys[cue_id] = cache_key
         if cleanup_cache is not None and cache_key in cleanup_cache:
+            logger.debug("cleanup cache hit: cue %s", cue_id)
             corrected[cue_id] = corrected[cue_id].with_text(cleanup_cache[cache_key])
         else:
+            logger.debug("cleanup cache miss: cue %s", cue_id)
             uncached_ids.append(cue_id)
 
     for index, batch_ids in enumerate(_batches(uncached_ids, batch_size), start=1):
+        logger.debug("Cleanup batch %d, cue IDs: %s", index, batch_ids)
         prompt = build_cleanup_prompt(
             batch_ids=batch_ids,
             source_by_id=source_by_id,
@@ -75,11 +83,13 @@ def cleanup_flagged_cues(
             on_batch(index, batch_ids)
         response = provider.translate_batch(prompt)
         fixes = parse_cleanup_response(response, batch_ids)
+        logger.debug("Cleanup batch %d returned %d fixes", index, len(fixes))
         for cue_id, text in fixes.items():
             corrected[cue_id] = corrected[cue_id].with_text(text)
             if cleanup_cache is not None:
                 cleanup_cache[cache_keys[cue_id]] = text
 
+    logger.debug("Cleanup complete, %d flagged cues processed", len(flagged_ids))
     return [corrected[cue.id] for cue in current_cues]
 
 

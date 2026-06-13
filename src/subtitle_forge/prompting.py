@@ -4,7 +4,10 @@ import json
 
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.languages import language_label
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
+
+logger = get_logger("prompting")
 
 
 def build_translation_prompt(
@@ -13,6 +16,7 @@ def build_translation_prompt(
     target_language: str,
     translation: TranslationConfig,
 ) -> str:
+    logger.debug("Building translation prompt for %d cues, %s -> %s", len(cues), source_language, target_language)
     custom = f"\nAdditional project prompt:\n{translation.prompt}\n" if translation.prompt else ""
     payload = [{"id": cue.id, "text": cue.text} for cue in cues]
     source = language_label(source_language)

@@ -7,7 +7,10 @@ import srt
 import webvtt
 
 from subtitle_forge.errors import SubtitleParseError
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
+
+logger = get_logger("subtitles")
 
 
 SUPPORTED_FORMATS = {"srt", "vtt"}
@@ -22,6 +25,7 @@ def detect_format(path: Path, explicit_format: str | None = None) -> str:
 
 def read_subtitles(path: Path, input_format: str | None = None) -> list[SubtitleCue]:
     fmt = detect_format(path, input_format)
+    logger.debug("Reading %s subtitles from %s", fmt, path)
     try:
         if fmt == "srt":
             cues = _read_srt(path)
@@ -35,11 +39,13 @@ def read_subtitles(path: Path, input_format: str | None = None) -> list[Subtitle
         raise SubtitleParseError(f"Could not parse {path}: {exc}") from exc
 
     _reject_duplicate_cue_ids(cues)
+    logger.debug("Loaded %d cues from %s", len(cues), path)
     return cues
 
 
 def write_subtitles(cues: list[SubtitleCue], path: Path, output_format: str | None = None) -> None:
     fmt = detect_format(path, output_format)
+    logger.debug("Writing %d cues as %s to %s", len(cues), fmt, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "srt":
         path.write_text(_format_srt(cues), encoding="utf-8")
@@ -84,6 +90,7 @@ def _reject_duplicate_cue_ids(cues: list[SubtitleCue]) -> None:
 
     if duplicates:
         duplicate_text = ", ".join(repr(cue_id) for cue_id in duplicates)
+        logger.warning("Duplicate subtitle cue ids found: %s", duplicate_text)
         raise SubtitleParseError(f"Duplicate subtitle cue id(s) found: {duplicate_text}. Cue ids must be unique.")
 
 

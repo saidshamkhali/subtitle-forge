@@ -4,9 +4,12 @@ import json
 
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.prompting import build_translation_prompt
 from subtitle_forge.providers import TranslationProvider
+
+logger = get_logger("translation")
 
 
 def translate_cues(
@@ -20,8 +23,12 @@ def translate_cues(
     if batch_size < 1:
         raise TranslationValidationError("Batch size must be at least 1.")
 
+    batches = _batches(cues, batch_size)
+    logger.debug("Translating %d cues in %d batches", len(cues), len(batches))
+
     translated: list[SubtitleCue] = []
-    for batch in _batches(cues, batch_size):
+    for index, batch in enumerate(batches, start=1):
+        logger.debug("Translation batch %d, size=%d", index, len(batch))
         prompt = build_translation_prompt(batch, source_language, target_language, translation_config)
         response = provider.translate_batch(prompt)
         translations = parse_provider_response(response, batch)

@@ -1,9 +1,9 @@
-from datetime import timedelta
 import logging
 import os
+import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-import sys
 
 import argostranslate
 import pytest
@@ -16,7 +16,6 @@ from subtitle_forge.argos import (
 )
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.models import SubtitleCue
-
 
 CACHED_STDERR = sys.stderr
 

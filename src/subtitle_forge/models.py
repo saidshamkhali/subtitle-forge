@@ -11,5 +11,5 @@ class SubtitleCue:
     end: timedelta
     text: str
 
-    def with_text(self, text: str) -> "SubtitleCue":
+    def with_text(self, text: str) -> SubtitleCue:
         return replace(self, text=text)

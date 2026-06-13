@@ -4,7 +4,6 @@ import re
 
 from subtitle_forge.models import SubtitleCue
 
-
 RTL_EMBEDDING = "\u202b"
 LTR_EMBEDDING = "\u202a"
 POP_DIRECTIONAL_FORMATTING = "\u202c"

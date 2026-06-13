@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
-import re
 
 from subtitle_forge.bidi import LTR_EMBEDDING, POP_DIRECTIONAL_FORMATTING, RTL_EMBEDDING
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import (
     BIDI_OR_INVISIBLE_RE,
@@ -14,6 +15,8 @@ from subtitle_forge.normalization import (
     strip_bidi_and_invisible,
     strip_tags,
 )
+
+logger = get_logger("quality")
 
 
 LATIN_RE = re.compile(r"[A-Za-z]")
@@ -79,6 +82,7 @@ def validate_translation(
     output_cues: list[SubtitleCue],
     allowed_latin_names: list[str],
 ) -> ValidationReport:
+    logger.debug("Validating %d source cues against %d output cues", len(source_cues), len(output_cues))
     output_text = "\n".join(cue.text for cue in output_cues)
     issues: list[CueIssue] = []
     source_by_id = {cue.id: cue for cue in source_cues}
@@ -142,6 +146,7 @@ def validate_translation(
             issues.append(CueIssue(cue.id, "mojibake", f"Dialogue contains mojibake token {match.group()!r}."))
 
     suspicious_ids = sorted({issue.cue_id for issue in issues if issue.cue_id}, key=_cue_sort_key)
+    logger.debug("Validation found %d issues, %d suspicious cues", len(issues), len(suspicious_ids))
     return ValidationReport(
         source_cue_count=len(source_cues),
         output_cue_count=len(output_cues),

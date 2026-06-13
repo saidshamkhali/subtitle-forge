@@ -4,7 +4,6 @@ from typer.testing import CliRunner
 
 from subtitle_forge.cli import app
 
-
 runner = CliRunner()
 
 

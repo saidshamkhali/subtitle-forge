@@ -35,6 +35,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3",
+  "pytest-cov>=6.1",
+  "ruff>=0.11.0",
+  "mypy>=1.16.0",
 ]
 
 [project.scripts]
@@ -45,4 +48,32 @@ packages = ["src/subtitle_forge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --cov --no-cov-on-fail"
+
+[tool.coverage.run]
+source = ["src/subtitle_forge"]
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "RUF", "B", "C4", "SIM", "TCH", "PT"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["subtitle_forge"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+explicit_package_bases = true
+mypy_path = "src"

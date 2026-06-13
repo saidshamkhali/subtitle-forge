@@ -1,22 +1,24 @@
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
+import ctypes
 import json
 import math
-from pathlib import Path
 import subprocess
 import time
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
-import ctypes
 
 import typer
 
 from subtitle_forge.argos import (
     VALID_ARGOS_DEVICES,
     configure_cuda_dll_directories,
-    install_argos_package as install_argos_language_package,
     translate_cues_with_argos,
+)
+from subtitle_forge.argos import (
+    install_argos_package as install_argos_language_package,
 )
 from subtitle_forge.cleanup import cleanup_flagged_cues
 from subtitle_forge.config import (
@@ -28,12 +30,12 @@ from subtitle_forge.config import (
 )
 from subtitle_forge.errors import SubtitleForgeError
 from subtitle_forge.executables import resolve_executable
+from subtitle_forge.logging_config import configure_logging
 from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import normalize_cues_for_target
 from subtitle_forge.providers import CodexExecProvider, MockProvider, TranslationProvider
 from subtitle_forge.quality import ValidationReport, validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
-
 
 app = typer.Typer(
     help="Translate subtitles with ArgosTranslate, deterministic validation, and targeted Codex cleanup.",
@@ -89,9 +91,11 @@ def providers(
 @app.command()
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
 ):
     """Check local setup for ArgosTranslate and the Codex cleanup provider."""
     config = _load_config_or_fail(config_path)
+    configure_logging(verbose)
     try:
         argos_translate = _load_argos_translate()
     except ImportError:
@@ -178,9 +182,11 @@ def translate(
         ),
     ] = False,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
 ):
     """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
     config = _load_config_or_fail(config_path)
+    configure_logging(verbose)
     settings = _resolve_translate_settings(
         config=config,
         input_path=input_path,

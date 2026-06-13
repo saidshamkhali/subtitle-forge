@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-import tomllib
 
 from subtitle_forge.errors import SubtitleForgeError
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.normalization import DEFAULT_ALLOWED_LATIN_NAMES
+
+logger = get_logger("config")
 
 
 CONFIG_FILENAMES = ("subtitle-forge.toml", "pyproject.toml")
@@ -47,6 +50,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or find_config_file()
     if not config_path:
         return AppConfig()
+
+    logger.debug("Loading config from %s", config_path)
 
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -140,6 +145,7 @@ def _string_list(data: dict, key: str, default: list[str], config_path: Path) ->
 def find_config_file(start: Path | None = None) -> Path | None:
     current = (start or Path.cwd()).resolve()
     for directory in (current, *current.parents):
+        logger.debug("Searching for config in %s", directory)
         for filename in CONFIG_FILENAMES:
             candidate = directory / filename
             if candidate.exists():

@@ -3,7 +3,10 @@ from __future__ import annotations
 import re
 
 from subtitle_forge.bidi import LTR_EMBEDDING, POP_DIRECTIONAL_FORMATTING, RTL_EMBEDDING, is_rtl_language
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
+
+logger = get_logger("normalization")
 
 
 BIDI_OR_INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
@@ -39,7 +42,9 @@ def normalize_cues_for_target(
     target_language: str,
     allowed_latin_names: list[str],
 ) -> list[SubtitleCue]:
-    if not is_rtl_language(target_language):
+    rtl = is_rtl_language(target_language)
+    logger.debug("Normalizing %d cues, target=%s, rtl=%s", len(cues), target_language, rtl)
+    if not rtl:
         return [_strip_structural_marks(cue) for cue in cues]
     return [_strip_structural_marks(cue).with_text(normalize_persian_text(cue.text, allowed_latin_names)) for cue in cues]
 

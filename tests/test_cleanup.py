@@ -2,7 +2,12 @@ from datetime import timedelta
 
 import pytest
 
-from subtitle_forge.cleanup import build_cleanup_cache_key, build_cleanup_prompt, cleanup_flagged_cues, parse_cleanup_response
+from subtitle_forge.cleanup import (
+    build_cleanup_cache_key,
+    build_cleanup_prompt,
+    cleanup_flagged_cues,
+    parse_cleanup_response,
+)
 from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
 from subtitle_forge.models import SubtitleCue

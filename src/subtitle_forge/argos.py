@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import io
 import logging
 import os
-from pathlib import Path
 import re
 import sys
 import threading
-from typing import Callable, Protocol
+from collections.abc import Callable
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Protocol
 
 from subtitle_forge.errors import ProviderError
+from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
 
+logger = get_logger("argos")
 
 TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
 VALID_ARGOS_DEVICES = {"cpu", "cuda", "auto"}
@@ -39,18 +42,22 @@ def translate_cues_with_argos(
         expected = ", ".join(sorted(VALID_ARGOS_DEVICES))
         raise ProviderError(f"Unsupported Argos device '{device_type}'. Expected one of: {expected}.")
 
+    logger.debug("Translating %d cues with Argos", len(cues))
     translated: list[SubtitleCue] = []
     cache: dict[str, str] = {}
     with _argos_device(device_type), _suppress_known_argos_warnings():
         if device_type in {"cuda", "auto"}:
-            configure_cuda_dll_directories()
+            cuda_dirs = configure_cuda_dll_directories()
+            logger.debug("CUDA DLL directories: %s", [str(d) for d in cuda_dirs])
         engine = translator or get_argos_translation(source_language, target_language)
         if translator is None and device_type == "cuda":
             return _translate_cues_batched_for_cuda(cues, engine, on_cue)
         for index, cue in enumerate(cues, start=1):
+            logger.debug("Argos translating cue %d/%d", index, len(cues))
             if on_cue:
                 on_cue(index, cue)
             translated.append(cue.with_text(_translate_text_preserving_tags(cue.text, engine, cache)))
+    logger.debug("Argos translation complete, %d cues translated", len(translated))
     return translated
 
 
@@ -221,6 +228,8 @@ def _translate_plain_part(text: str, translator: TextTranslator, cache: dict[str
 def _translate_with_cache(text: str, translator: TextTranslator, cache: dict[str, str]) -> str:
     if text not in cache:
         cache[text] = translator.translate(text).strip()
+    else:
+        logger.debug("cache hit for text: %.30s...", text)
     return cache[text]
 
 
@@ -287,6 +296,8 @@ def _translate_segments_direct_cuda(
         import ctranslate2
     except ImportError:
         return None
+
+    logger.debug("Direct CUDA translation path active, %d segments", len(segments))
 
     if getattr(settings, "device", None) != "cuda":
         return None
@@ -384,15 +395,10 @@ def _set_windows_dll_directory(directory: Path) -> None:
         pass
 
 
-class _ArgosNoiseFilter(logging.Filter):
-    noise_messages = (
-        "package default expects mwt, which has been added",
-        "GPU requested, but is not available!",
-    )
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        return not any(noise in message for noise in self.noise_messages)
+_ARGOS_NOISE_MESSAGES = (
+    "package default expects mwt, which has been added",
+    "GPU requested, but is not available!",
+)
 
 
 @contextmanager
@@ -410,6 +416,7 @@ def _argos_device(device_type: str | None):
     previous_batch_size = getattr(settings_module, "batch_size", None) if settings_module else None
     previous_compute_type = getattr(settings_module, "compute_type", None) if settings_module else None
     os.environ["ARGOS_DEVICE_TYPE"] = device_type
+    logger.debug("Setting Argos device type to %s", device_type)
     if settings_module is not None:
         settings_module.device = device_type
         if device_type == "cuda":
@@ -431,14 +438,22 @@ def _argos_device(device_type: str | None):
 
 @contextmanager
 def _suppress_known_argos_warnings():
+    class _NoiseFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            message = record.getMessage()
+            return not any(noise in message for noise in _ARGOS_NOISE_MESSAGES)
+
     root_logger = logging.getLogger()
-    noise_filter = _ArgosNoiseFilter()
-    original_stderr = sys.stderr
-    filtered_stderr = _FilteredStderr(original_stderr)
-    fd_filter = _StderrFdFilter()
+    noise_filter = _NoiseFilter()
+
     root_logger.addFilter(noise_filter)
     for handler in root_logger.handlers:
         handler.addFilter(noise_filter)
+
+    original_stderr = sys.stderr
+    filtered_stderr = _FilteredStderr(original_stderr)
+    fd_filter = _StderrFdFilter()
+
     try:
         sys.stderr = filtered_stderr
         fd_filter.start()
@@ -477,12 +492,12 @@ class _FilteredStderr(io.TextIOBase):
         return getattr(self._wrapped, "encoding", None)
 
     def _write_line(self, line: str) -> None:
-        if not any(noise in line for noise in _ArgosNoiseFilter.noise_messages):
+        if not any(noise in line for noise in _ARGOS_NOISE_MESSAGES):
             self._wrapped.write(line)
 
 
 class _StderrFdFilter:
-    noise_messages = tuple(message.encode("utf-8") for message in _ArgosNoiseFilter.noise_messages)
+    noise_messages = tuple(message.encode("utf-8") for message in _ARGOS_NOISE_MESSAGES)
 
     def __init__(self) -> None:
         self._saved_fd: int | None = None

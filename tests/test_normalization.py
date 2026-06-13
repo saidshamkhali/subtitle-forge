@@ -16,7 +16,14 @@ def test_persian_normalizer_wraps_lines_and_allowed_latin_names():
 
 
 def test_persian_normalizer_strips_structural_marks_from_ids():
-    cues = [SubtitleCue(id=f"{RTL_EMBEDDING}1{POP_DIRECTIONAL_FORMATTING}", start=timedelta(seconds=1), end=timedelta(seconds=2), text="سلام.")]
+    cues = [
+        SubtitleCue(
+            id=f"{RTL_EMBEDDING}1{POP_DIRECTIONAL_FORMATTING}",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text="سلام.",
+        )
+    ]
 
     normalized = normalize_cues_for_target(cues, "fa", [])
 

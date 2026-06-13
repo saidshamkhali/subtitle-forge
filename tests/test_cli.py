@@ -367,7 +367,10 @@ def test_cli_translate_does_not_install_argos_package_by_default(monkeypatch, tm
 def test_cli_translate_cuda_without_runtime_fails_early(monkeypatch, tmp_path):
     output = tmp_path / "movie.fa.srt"
 
-    monkeypatch.setattr("subtitle_forge.cli._cuda_status", lambda: "1 CUDA device(s), but cublas64_12.dll is not loadable")
+    monkeypatch.setattr(
+        "subtitle_forge.cli._cuda_status",
+        lambda: "1 CUDA device(s), but cublas64_12.dll is not loadable",
+    )
     monkeypatch.setattr("subtitle_forge.cli.translate_cues_with_argos", _raise_if_argos_translation_runs)
 
     result = runner.invoke(
@@ -401,7 +404,9 @@ def _fake_argos_bad_first_pass(cues, source_language, target_language, translato
     return translated
 
 
-def _fake_argos_clean_first_pass(cues, source_language, target_language, translator=None, device_type=None, on_cue=None):
+def _fake_argos_clean_first_pass(
+    cues, source_language, target_language, translator=None, device_type=None, on_cue=None
+):
     translations = {
         "Hello.": "سلام.",
         "Welcome to Subtitle Forge.": "به City Hunter خوش آمدید.",
@@ -415,7 +420,9 @@ def _fake_argos_clean_first_pass(cues, source_language, target_language, transla
     return translated
 
 
-def _fake_argos_unfixable_first_pass(cues, source_language, target_language, translator=None, device_type=None, on_cue=None):
+def _fake_argos_unfixable_first_pass(
+    cues, source_language, target_language, translator=None, device_type=None, on_cue=None
+):
     translated = []
     for index, cue in enumerate(cues, start=1):
         if on_cue:

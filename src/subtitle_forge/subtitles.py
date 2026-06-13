@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import srt
 import webvtt
@@ -9,6 +9,9 @@ import webvtt
 from subtitle_forge.errors import SubtitleParseError
 from subtitle_forge.logging_config import get_logger
 from subtitle_forge.models import SubtitleCue
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = get_logger("subtitles")
 

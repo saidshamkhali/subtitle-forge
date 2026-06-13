@@ -1,17 +1,20 @@
 ﻿from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from subtitle_forge.config import CodexProviderConfig
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.executables import resolve_executable
 from subtitle_forge.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from subtitle_forge.config import CodexProviderConfig
 
 logger = get_logger("providers")
 
@@ -55,10 +58,8 @@ class CodexExecProvider:
             with open(output_path, encoding="utf-8") as output:
                 last_message = output.read().strip()
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(output_path)
-            except OSError:
-                pass
 
         return last_message or completed.stdout.strip()
 
@@ -70,7 +71,10 @@ class MockProvider:
     def translate_batch(self, prompt: str) -> str:
         if "Cues:" in prompt:
             cues = _extract_cleanup_payload(prompt)
-            return json.dumps({cue["id"]: _mock_translate(cue["src"], self.target_language) for cue in cues}, ensure_ascii=False)
+            return json.dumps(
+                {cue["id"]: _mock_translate(cue["src"], self.target_language) for cue in cues},
+                ensure_ascii=False,
+            )
         cues = _extract_prompt_payload(prompt)
         return json.dumps(
             [{"id": cue["id"], "text": _mock_translate(cue["text"], self.target_language)} for cue in cues],

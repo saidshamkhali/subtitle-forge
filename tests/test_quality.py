@@ -7,7 +7,14 @@ from subtitle_forge.quality import validate_translation, validation_passed
 
 def test_validator_flags_disallowed_latin_and_missing_persian():
     source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="Hello.")]
-    output = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text=f"{RTL_EMBEDDING}Hello.{POP_DIRECTIONAL_FORMATTING}")]
+    output = [
+        SubtitleCue(
+            id="1",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text=f"{RTL_EMBEDDING}Hello.{POP_DIRECTIONAL_FORMATTING}",
+        )
+    ]
 
     report = validate_translation(source, output, [])
 
@@ -65,7 +72,14 @@ def test_validator_still_flags_untranslated_latin_only_line():
 
 def test_validator_flags_mojibake_and_tag_mismatch():
     source = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text="<i>Hello.</i>")]
-    output = [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2), text=f"{RTL_EMBEDDING}Ã bad{POP_DIRECTIONAL_FORMATTING}")]
+    output = [
+        SubtitleCue(
+            id="1",
+            start=timedelta(seconds=1),
+            end=timedelta(seconds=2),
+            text=f"{RTL_EMBEDDING}Ã bad{POP_DIRECTIONAL_FORMATTING}",
+        )
+    ]
 
     report = validate_translation(source, output, [])
 

@@ -7,8 +7,7 @@ import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -31,11 +30,15 @@ from subtitle_forge.config import (
 from subtitle_forge.errors import SubtitleForgeError
 from subtitle_forge.executables import resolve_executable
 from subtitle_forge.logging_config import configure_logging
-from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import normalize_cues_for_target
 from subtitle_forge.providers import CodexExecProvider, MockProvider, TranslationProvider
 from subtitle_forge.quality import ValidationReport, validate_translation, validation_passed
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from subtitle_forge.models import SubtitleCue
 
 app = typer.Typer(
     help="Translate subtitles with ArgosTranslate, deterministic validation, and targeted Codex cleanup.",
@@ -115,9 +118,9 @@ def doctor(
     configure_logging(verbose)
     try:
         argos_translate = _load_argos_translate()
-    except ImportError:
+    except ImportError as err:
         typer.secho("Missing: ArgosTranslate Python package was not found.", fg=typer.colors.RED)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from err
 
     installed_languages = argos_translate.get_installed_languages()
     installed_codes = sorted(language.code for language in installed_languages)
@@ -179,10 +182,20 @@ def translate(
     source_language: Annotated[str | None, typer.Option("--from", help="Source language code/name.")] = None,
     target_language: Annotated[str | None, typer.Option("--to", help="Target language code/name.")] = None,
     model: Annotated[str | None, typer.Option("--model", help="Optional Codex model override.")] = None,
-    reasoning_effort: Annotated[str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")] = None,
-    cleanup_provider_name: Annotated[str | None, typer.Option("--cleanup-provider", help="Cleanup provider for flagged cues: codex or mock.")] = None,
-    argos_device: Annotated[str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")] = None,
-    cleanup_batch_size: Annotated[int | None, typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call.")] = None,
+    reasoning_effort: Annotated[
+        str | None, typer.Option("--reasoning-effort", help="Optional Codex reasoning effort.")
+    ] = None,
+    cleanup_provider_name: Annotated[
+        str | None,
+        typer.Option("--cleanup-provider", help="Cleanup provider for flagged cues: codex or mock."),
+    ] = None,
+    argos_device: Annotated[
+        str | None, typer.Option("--argos-device", help="Argos first-pass device: cpu, cuda, or auto.")
+    ] = None,
+    cleanup_batch_size: Annotated[
+        int | None,
+        typer.Option("--cleanup-batch-size", min=1, help="Flagged cues per cleanup call."),
+    ] = None,
     report_path: Annotated[Path | None, typer.Option("--report", help="Validation report path.")] = None,
     keep_intermediate: Annotated[
         bool | None,
@@ -302,7 +315,9 @@ def _build_cleanup_provider(
 ) -> TranslationProvider:
     normalized = name.lower()
     if normalized == "codex":
-        selected_reasoning_effort = reasoning_effort if reasoning_effort is not None else (config.codex.reasoning_effort or "low")
+        selected_reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else (config.codex.reasoning_effort or "low")
+        )
         return CodexExecProvider(config.codex, model=model, reasoning_effort=selected_reasoning_effort)
     if normalized == "mock":
         return MockProvider(target_language=target_language)
@@ -498,7 +513,10 @@ def _stage_initial_validation(
     settings: _TranslateSettings,
 ) -> tuple[ValidationReport, float]:
     started = time.perf_counter()
-    _stage("4/6 Validating and flagging suspicious cues", "Checking structure, mojibake, tags, RTL marks, and Latin text")
+    _stage(
+        "4/6 Validating and flagging suspicious cues",
+        "Checking structure, mojibake, tags, RTL marks, and Latin text",
+    )
     report = validate_translation(cues, normalized_cues, settings.config.allowed_latin_names)
     _detail(f"Flagged suspicious cues: {len(report.suspicious_cue_ids)}")
     issue_summary = _issue_summary(report)
@@ -695,7 +713,10 @@ def _print_summary(
     _metric("Output", str(output_path))
     _metric("Report", str(report_path))
     _metric("Cues", str(cue_count))
-    _metric("Flagged", f"{len(initial_report.suspicious_cue_ids)} before cleanup, {len(final_report.suspicious_cue_ids)} after")
+    _metric(
+        "Flagged",
+        f"{len(initial_report.suspicious_cue_ids)} before cleanup, {len(final_report.suspicious_cue_ids)} after",
+    )
     _metric("Latin", f"{final_report.disallowed_latin_dialogue_line_count} disallowed dialogue lines")
     _metric("Elapsed", f"{elapsed_seconds:.1f}s")
     _metric("Status", "passed" if passed else "failed")

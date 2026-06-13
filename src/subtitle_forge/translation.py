@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
-from subtitle_forge.config import TranslationConfig
-from subtitle_forge.utils import batches
 from subtitle_forge.errors import TranslationValidationError
 from subtitle_forge.logging_config import get_logger
-from subtitle_forge.models import SubtitleCue
 from subtitle_forge.prompting import build_translation_prompt
-from subtitle_forge.providers import TranslationProvider
+from subtitle_forge.utils import batches
+
+if TYPE_CHECKING:
+    from subtitle_forge.config import TranslationConfig
+    from subtitle_forge.models import SubtitleCue
+    from subtitle_forge.providers import TranslationProvider
 
 logger = get_logger("translation")
 

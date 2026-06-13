@@ -33,7 +33,10 @@ class NoisyTranslator:
     def translate(self, text: str) -> str:
         logging.warning("Language en package default expects mwt, which has been added")
         logging.warning("GPU requested, but is not available!")
-        print("2026-06-04 20:31:28 WARNING: Language en package default expects mwt, which has been added", file=CACHED_STDERR)
+        print(
+            "2026-06-04 20:31:28 WARNING: Language en package default expects mwt, which has been added",
+            file=CACHED_STDERR,
+        )
         print("2026-06-05 00:41:41 WARNING: GPU requested, but is not available!", file=CACHED_STDERR)
         return "سلام."
 

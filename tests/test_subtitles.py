@@ -16,7 +16,11 @@ def test_parse_srt(tmp_path):
 
     cues = read_subtitles(path)
 
-    assert cues == [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2, milliseconds=500), text="Hello.")]
+    assert cues == [
+        SubtitleCue(
+            id="1", start=timedelta(seconds=1), end=timedelta(seconds=2, milliseconds=500), text="Hello."
+        )
+    ]
 
 
 def test_parse_vtt(tmp_path):
@@ -28,7 +32,11 @@ def test_parse_vtt(tmp_path):
 
     cues = read_subtitles(path)
 
-    assert cues == [SubtitleCue(id="1", start=timedelta(seconds=1), end=timedelta(seconds=2, milliseconds=500), text="Hello.")]
+    assert cues == [
+        SubtitleCue(
+            id="1", start=timedelta(seconds=1), end=timedelta(seconds=2, milliseconds=500), text="Hello."
+        )
+    ]
 
 
 def test_export_srt_preserves_timings(tmp_path):

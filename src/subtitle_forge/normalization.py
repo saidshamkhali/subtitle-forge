@@ -46,7 +46,10 @@ def normalize_cues_for_target(
     logger.debug("Normalizing %d cues, target=%s, rtl=%s", len(cues), target_language, rtl)
     if not rtl:
         return [_strip_structural_marks(cue) for cue in cues]
-    return [_strip_structural_marks(cue).with_text(normalize_persian_text(cue.text, allowed_latin_names)) for cue in cues]
+    return [
+        _strip_structural_marks(cue).with_text(normalize_persian_text(cue.text, allowed_latin_names))
+        for cue in cues
+    ]
 
 
 def normalize_persian_text(text: str, allowed_latin_names: list[str]) -> str:

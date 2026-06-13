@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
-from subtitle_forge.config import TranslationConfig
 from subtitle_forge.languages import language_label
 from subtitle_forge.logging_config import get_logger
-from subtitle_forge.models import SubtitleCue
+
+if TYPE_CHECKING:
+    from subtitle_forge.config import TranslationConfig
+    from subtitle_forge.models import SubtitleCue
 
 logger = get_logger("prompting")
 

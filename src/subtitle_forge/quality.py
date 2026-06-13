@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from subtitle_forge.bidi import LTR_EMBEDDING, POP_DIRECTIONAL_FORMATTING, RTL_EMBEDDING
 from subtitle_forge.logging_config import get_logger
-from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import (
     BIDI_OR_INVISIBLE_RE,
     PERSIAN_RE,
@@ -15,6 +15,9 @@ from subtitle_forge.normalization import (
     strip_bidi_and_invisible,
     strip_tags,
 )
+
+if TYPE_CHECKING:
+    from subtitle_forge.models import SubtitleCue
 
 logger = get_logger("quality")
 
@@ -130,16 +133,30 @@ def validate_translation(
 
         for line in cue.text.splitlines() or [cue.text]:
             clean_line = strip_bidi_and_invisible(strip_tags(line))
-            if clean_line.strip() and not PERSIAN_RE.search(clean_line) and not _line_is_allowed_latin_only(line, allowed_latin_names):
+            if (
+                clean_line.strip()
+                and not PERSIAN_RE.search(clean_line)
+                and not _line_is_allowed_latin_only(line, allowed_latin_names)
+            ):
                 issues.append(CueIssue(cue.id, "missing_persian", "Dialogue line has no Persian text.", line))
             if _line_has_disallowed_latin(line, allowed_latin_names):
                 disallowed_latin_count += 1
-                issues.append(CueIssue(cue.id, "disallowed_latin", "Dialogue line contains disallowed Latin text.", line))
+                issues.append(
+                    CueIssue(cue.id, "disallowed_latin", "Dialogue line contains disallowed Latin text.", line)
+                )
             if line and not (line.startswith(RTL_EMBEDDING) and line.endswith(POP_DIRECTIONAL_FORMATTING)):
                 unwrapped_count += 1
-                issues.append(CueIssue(cue.id, "missing_rtl_wrap", "Dialogue line is missing RTL embedding marks.", line))
+                issues.append(
+                    CueIssue(
+                        cue.id, "missing_rtl_wrap", "Dialogue line is missing RTL embedding marks.", line
+                    )
+                )
             if _line_has_repeated_junk(line):
-                issues.append(CueIssue(cue.id, "repeated_junk", "Dialogue line contains suspicious repeated tokens.", line))
+                issues.append(
+                    CueIssue(
+                        cue.id, "repeated_junk", "Dialogue line contains suspicious repeated tokens.", line
+                    )
+                )
 
     for cue in output_cues:
         for match in MOJIBAKE_RE.finditer(cue.text):
@@ -198,7 +215,7 @@ def _line_is_allowed_latin_only(line: str, allowed_latin_names: list[str]) -> bo
     without_tags = strip_tags(line)
     without_controls = strip_bidi_and_invisible(without_tags)
     without_allowed = strip_allowed_latin_names(without_controls, allowed_latin_names)
-    without_punctuation = re.sub(r"[\s\d.,!?;:'\"()\[\]{}<>،؛؟…\\/\-–—_]+", "", without_allowed)
+    without_punctuation = re.sub(r"[\s\d.,!?;:'\"()\[\]{}<>،؛؟…\\/\-\u2013_]+", "", without_allowed)
     return bool(without_controls.strip()) and not without_punctuation
 
 

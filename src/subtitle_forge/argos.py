@@ -6,14 +6,17 @@ import os
 import re
 import sys
 import threading
-from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.logging_config import get_logger
-from subtitle_forge.models import SubtitleCue
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from subtitle_forge.models import SubtitleCue
 
 logger = get_logger("argos")
 
@@ -207,7 +210,7 @@ def _process_line_preserving_tags(line: str, process_fn: Callable[[str], str]) -
     tags = TAG_RE.findall(line)
     processed_parts = [process_fn(part) for part in parts]
     result = processed_parts[0]
-    for tag, part in zip(tags, processed_parts[1:]):
+    for tag, part in zip(tags, processed_parts[1:], strict=False):
         result += tag + part
     return result.replace("\r", " ").replace("\n", " ").strip()
 
@@ -329,7 +332,7 @@ def _translate_segments_direct_cuda(
         return None
 
     translated: dict[str, str] = {}
-    for source, result in zip(segments, translated_batches):
+    for source, result in zip(segments, translated_batches, strict=False):
         value = tokenizer.decode(result.hypotheses[0])
         if getattr(pkg, "target_prefix", "") and value.startswith(pkg.target_prefix):
             value = value[len(pkg.target_prefix) :]
@@ -362,7 +365,7 @@ def _candidate_cuda_bin_dirs() -> list[Path]:
         if key.startswith("CUDA_PATH") and value:
             candidates.append(Path(value) / "bin")
 
-    default_root = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "NVIDIA GPU Computing Toolkit" / "CUDA"
+    default_root = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "NVIDIA GPU Computing Toolkit" / "CUDA"
     if default_root.exists():
         candidates.extend(path / "bin" for path in sorted(default_root.glob("v*"), reverse=True))
 
@@ -542,15 +545,11 @@ class _StderrFdFilter:
 
     def _cleanup(self) -> None:
         if self._saved_fd is not None:
-            try:
+            with suppress(OSError):
                 os.close(self._saved_fd)
-            except OSError:
-                pass
         if self._write_fd is not None:
-            try:
+            with suppress(OSError):
                 os.close(self._write_fd)
-            except OSError:
-                pass
         self._saved_fd = None
         self._write_fd = None
         self._thread = None

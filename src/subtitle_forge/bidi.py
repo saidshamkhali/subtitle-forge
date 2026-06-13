@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
-from subtitle_forge.models import SubtitleCue
+if TYPE_CHECKING:
+    from subtitle_forge.models import SubtitleCue
 
 RTL_EMBEDDING = "\u202b"
 LTR_EMBEDDING = "\u202a"
@@ -11,7 +13,7 @@ POP_DIRECTIONAL_FORMATTING = "\u202c"
 RTL_LANGUAGES = {"fa", "fas", "per", "persian", "farsi", "persian/farsi", "ar", "arabic", "he", "hebrew", "ur", "urdu"}
 VALID_RTL_MODES = {"auto", "off", "marks"}
 
-_TAG_OR_ASCII_RUN = re.compile(r"(<[^>]+>)|([A-Za-z0-9][A-Za-z0-9 ._&'’:-]*[A-Za-z0-9])")
+_TAG_OR_ASCII_RUN = re.compile(r"(<[^>]+>)|([A-Za-z0-9][A-Za-z0-9 ._&'\u2019:-]*[A-Za-z0-9])")
 
 
 def stabilize_cues_for_rtl_display(cues: list[SubtitleCue], target_language: str, mode: str) -> list[SubtitleCue]:

@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from subtitle_forge.config import TranslationConfig
 from subtitle_forge.errors import TranslationValidationError
-from subtitle_forge.utils import batches
 from subtitle_forge.logging_config import get_logger
-from subtitle_forge.models import SubtitleCue
 from subtitle_forge.normalization import strip_bidi_and_invisible
-from subtitle_forge.providers import TranslationProvider
-from subtitle_forge.quality import CueIssue
+from subtitle_forge.utils import batches
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from subtitle_forge.config import TranslationConfig
+    from subtitle_forge.models import SubtitleCue
+    from subtitle_forge.providers import TranslationProvider
+    from subtitle_forge.quality import CueIssue
 
 logger = get_logger("cleanup")
 
@@ -130,9 +134,14 @@ def build_cleanup_prompt(
 
     allowed_names = ", ".join(allowed_latin_names) or "none"
     custom_prompt = f"\nExtra: {translation_config.prompt}" if translation_config.prompt else ""
+    rules = (
+        f"{source_language}->{target_language}; use src for meaning; use mt if usable; "
+        f"preserve <i>/<b>/<u>; no cue numbers/timestamps; no bidi controls; "
+        f"no Latin except: {allowed_names}; style: {translation_config.style}.{custom_prompt}"
+    )
     return f"""Repair only these suspicious subtitle cues.
 Return JSON object only: {{"cue_id":"corrected text"}}.
-Rules: {source_language}->{target_language}; use src for meaning; use mt if usable; preserve <i>/<b>/<u>; no cue numbers/timestamps; no bidi controls; no Latin except: {allowed_names}; style: {translation_config.style}.{custom_prompt}
+Rules: {rules}
 Cues:
 {json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}
 """

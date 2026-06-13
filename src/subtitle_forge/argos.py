@@ -8,13 +8,13 @@ import sys
 import threading
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from subtitle_forge.errors import ProviderError
 from subtitle_forge.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from subtitle_forge.models import SubtitleCue
 
@@ -25,7 +25,7 @@ VALID_ARGOS_DEVICES = {"cpu", "cuda", "auto"}
 CUDA_SEGMENT_CHUNK_SIZE = 1200
 CUDA_INTERNAL_BATCH_SIZE = 128
 CUDA_COMPUTE_TYPE = "float16"
-_CUDA_DLL_DIRECTORY_HANDLES = []
+_CUDA_DLL_DIRECTORY_HANDLES: list = []
 
 
 class TextTranslator(Protocol):
@@ -154,7 +154,7 @@ def install_argos_package(
     return True
 
 
-def _find_argos_translation(argos_translate, source_language: str, target_language: str) -> TextTranslator | None:
+def _find_argos_translation(argos_translate: Any, source_language: str, target_language: str) -> TextTranslator | None:
     installed = argos_translate.get_installed_languages()
     source = next((language for language in installed if language.code == source_language), None)
     target = next((language for language in installed if language.code == target_language), None)
@@ -396,7 +396,7 @@ _ARGOS_NOISE_MESSAGES = (
 
 
 @contextmanager
-def _argos_device(device_type: str | None):
+def _argos_device(device_type: str | None) -> Generator[None, None, None]:
     if device_type is None:
         yield
         return
@@ -431,7 +431,7 @@ def _argos_device(device_type: str | None):
 
 
 @contextmanager
-def _suppress_known_argos_warnings():
+def _suppress_known_argos_warnings() -> Generator[None, None, None]:
     class _NoiseFilter(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
             message = record.getMessage()
@@ -461,7 +461,7 @@ def _suppress_known_argos_warnings():
 
 
 class _FilteredStderr(io.TextIOBase):
-    def __init__(self, wrapped):
+    def __init__(self, wrapped: Any) -> None:
         self._wrapped = wrapped
         self._buffer = ""
 
@@ -482,7 +482,7 @@ class _FilteredStderr(io.TextIOBase):
         return True
 
     @property
-    def encoding(self):
+    def encoding(self) -> str | None:  # type: ignore[override]
         return getattr(self._wrapped, "encoding", None)
 
     def _write_line(self, line: str) -> None:

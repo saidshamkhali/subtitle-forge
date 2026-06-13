@@ -7,7 +7,8 @@ import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated
+from pathlib import Path  # noqa: TC003
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn
 
 import typer
 
@@ -36,8 +37,6 @@ from subtitle_forge.quality import ValidationReport, validate_translation, valid
 from subtitle_forge.subtitles import detect_format, read_subtitles, write_subtitles
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from subtitle_forge.models import SubtitleCue
 
 app = typer.Typer(
@@ -67,7 +66,7 @@ def main_callback(
 def inspect(
     input_path: Annotated[Path, typer.Argument(exists=True, readable=True, help="Subtitle file to inspect.")],
     input_format: Annotated[str | None, typer.Option("--format", help="Input format: srt or vtt.")] = None,
-):
+) -> None:
     """Print basic subtitle metadata."""
     try:
         cues = read_subtitles(input_path, input_format)
@@ -86,7 +85,7 @@ def inspect(
 def validate(
     input_path: Annotated[Path, typer.Argument(exists=True, readable=True, help="Subtitle file to validate.")],
     input_format: Annotated[str | None, typer.Option("--format", help="Input format: srt or vtt.")] = None,
-):
+) -> None:
     """Validate that a subtitle file can be parsed."""
     try:
         cues = read_subtitles(input_path, input_format)
@@ -98,7 +97,7 @@ def validate(
 @app.command()
 def providers(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
-):
+) -> None:
     """List cleanup providers used after Argos validation."""
     config = _load_config_or_fail(config_path)
     typer.echo("Translation pipeline: ArgosTranslate first pass + deterministic normalization + flagged-cue cleanup")
@@ -112,7 +111,7 @@ def providers(
 def doctor(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to subtitle-forge.toml.")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
-):
+) -> None:
     """Check local setup for ArgosTranslate and the Codex cleanup provider."""
     config = _load_config_or_fail(config_path)
     configure_logging(verbose)
@@ -213,7 +212,7 @@ def translate(
     ] = False,
     prompt: Annotated[str | None, typer.Option("--prompt", help="Additional prompt instructions.")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show debug logging output.")] = False,
-):
+) -> None:
     """Run the full Argos -> normalize -> validate -> cleanup pipeline."""
     config = _load_config_or_fail(config_path)
     configure_logging(verbose)
@@ -241,6 +240,11 @@ def translate(
             return
         settings = _require_translate_settings(settings)
         _validate_translate_inputs(settings)
+
+        assert settings.input_path is not None
+        assert settings.output_path is not None
+        assert settings.report_path is not None
+        assert settings.output_format is not None
 
         _print_translate_header(
             settings.input_path,
@@ -331,7 +335,7 @@ def _resolve_output_format(input_path: Path, output_path: Path) -> str:
     return detect_format(input_path)
 
 
-def _load_argos_translate():
+def _load_argos_translate() -> Any:
     import argostranslate.translate
 
     return argostranslate.translate
@@ -447,6 +451,7 @@ def _require_translate_settings(settings: _TranslateSettings) -> _TranslateSetti
 
 
 def _validate_translate_inputs(settings: _TranslateSettings) -> None:
+    assert settings.input_path is not None
     if not settings.input_path.exists() or not settings.input_path.is_file():
         raise SubtitleForgeError(f"Input subtitle file was not found: {settings.input_path}")
     if settings.argos_device not in VALID_ARGOS_DEVICES:
@@ -492,6 +497,8 @@ def _stage_normalize(
     argos_cues: list[SubtitleCue],
     settings: _TranslateSettings,
 ) -> tuple[list[SubtitleCue], dict[str, str], float]:
+    assert settings.output_path is not None
+    assert settings.output_format is not None
     started = time.perf_counter()
     _stage("3/6 Normalizing Persian subtitle display", "Adding RTL/LTR controls and safe Persian spacing")
     normalized_cues = normalize_cues_for_target(argos_cues, settings.target, settings.config.allowed_latin_names)
@@ -531,6 +538,7 @@ def _stage_cleanup(
     initial_report: ValidationReport,
     settings: _TranslateSettings,
 ) -> tuple[list[SubtitleCue], float]:
+    assert settings.output_path is not None
     started = time.perf_counter()
     flagged_ids = initial_report.suspicious_cue_ids
     batch_count = math.ceil(len(flagged_ids) / settings.cleanup_batch_size) if flagged_ids else 0
@@ -558,6 +566,10 @@ def _stage_cleanup(
         _detail(f"Cleanup batch {index}/{batch_count}: cues {preview}{suffix}")
 
     with typer.progressbar(length=batch_count, label="Repairing flagged cues") as progress:
+        def _on_batch(index: int, ids: list[str]) -> None:
+            on_cleanup_batch(index, ids)
+            progress.update(1)
+
         cleaned_cues = cleanup_flagged_cues(
             source_cues=cues,
             current_cues=normalized_cues,
@@ -569,7 +581,7 @@ def _stage_cleanup(
             translation_config=settings.translation_config,
             allowed_latin_names=settings.config.allowed_latin_names,
             batch_size=settings.cleanup_batch_size,
-            on_batch=lambda index, ids: (on_cleanup_batch(index, ids), progress.update(1)),
+            on_batch=_on_batch,
             cleanup_cache=cleanup_cache,
         )
     _write_cleanup_cache(cache_path, cleanup_cache)
@@ -581,6 +593,8 @@ def _stage_finalize(
     cleaned_cues: list[SubtitleCue],
     settings: _TranslateSettings,
 ) -> tuple[list[SubtitleCue], ValidationReport, float]:
+    assert settings.output_path is not None
+    assert settings.output_format is not None
     started = time.perf_counter()
     _stage("6/6 Final normalization, validation, and write", f"Output: {settings.output_path}")
     final_cues = normalize_cues_for_target(cleaned_cues, settings.target, settings.config.allowed_latin_names)
@@ -595,6 +609,7 @@ def _issue_summary(report: ValidationReport) -> str:
 
 
 def _cleanup_cache_path(settings: _TranslateSettings) -> Path:
+    assert settings.output_path is not None
     return settings.output_path.with_suffix(settings.output_path.suffix + ".cleanup-cache.json")
 
 
@@ -725,7 +740,7 @@ def _print_summary(
         _metric("Timing", timing_text)
 
 
-def _fail(exc: Exception) -> None:
+def _fail(exc: Exception) -> NoReturn:
     typer.secho(f"Error: {exc}", fg=typer.colors.RED)
     raise typer.Exit(1)
 
